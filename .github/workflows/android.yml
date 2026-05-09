@@ -19,7 +19,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'Zulu' # Aapka favourite and stable distribution
+          distribution: 'zulu' # Aapka favourite and stable distribution
           cache: gradle
 
       # 🌟 THE CRITICAL FIX: Permission denied (Exit 126) ko khatam karne ke liye
