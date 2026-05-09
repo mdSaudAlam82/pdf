@@ -1,48 +1,49 @@
-name: Android CI/CD Pipeline
+name: Hi-Read Ultimate CI/CD (2026 Edition)
 
-# Jab bhi 'main' branch par code push hoga ya Pull Request aayegi, ye trigger hoga
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
 
 jobs:
   build:
-    name: Build & Verify
+    name: Build & Quality Check
     runs-on: ubuntu-latest
 
     steps:
-      # 1. GitHub aapka code checkout karega
-      - name: Checkout Code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Kotlin 2.x aur API 36 ke liye Java 21 standard hai
-      - name: Set up JDK 21
+      - name: ☕ Set up JDK 21 (Zulu)
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'temurin'
+          distribution: 'Zulu' # Aapka favourite and stable distribution
           cache: gradle
 
-      # 3. Gradle setup (jisse build fast ho)
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: wrapper
+      # 🌟 THE CRITICAL FIX: Permission denied (Exit 126) ko khatam karne ke liye
+      - name: 🔨 Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-      # 4. Code Formatting Check (Detekt/Ktlint)
-      # Ye ensure karega ki koi bhi developer kharab format me code push na kare
-      - name: Run Code Linter
-        run: ./gradlew lintKotlin
+      # 🌟 Step 1: Code Quality Check (Android Default Lint)
+      # Ye ensure karega ki architecture aur performance mein koi issue na ho
+      - name: 🔍 Run Quality Lint
+        run: ./gradlew lint
 
-      # 5. Debug APK Build Karna
-      - name: Build Debug APK
+      # 🌟 Step 2: Debug Build (For instant testing)
+      - name: 🛠️ Build Debug APK
         run: ./gradlew assembleDebug
 
-      # 6. APK ko GitHub par upload karna taaki koi bhi direct download karke test kar sake
-      - name: Upload APK
+      # 🌟 Step 3: Release Build (For performance bench-marking)
+      - name: 🚀 Build Release APK
+        run: ./gradlew assembleRelease
+
+      # 🌟 Step 4: Dono APKs ko ek saath upload karna
+      - name: 📦 Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Hi-Read-App-Debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Hi-Read-Build-Package
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
