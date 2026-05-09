@@ -22,6 +22,18 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
+// 🌟 THE ELITE FIX: MVI Actions Interface
+sealed interface VaultAction {
+    data object LoadPublicPdfs : VaultAction
+    data object ClosePicker : VaultAction
+    data object ToggleViewMode : VaultAction
+    data class OpenPdf(val pdfPath: String, val onReady: (String) -> Unit) : VaultAction
+    data class MoveToVault(val pdfIds: List<String>) : VaultAction
+    data class RemoveFromVault(val pdfId: String) : VaultAction
+    data class DeletePdf(val pdf: PdfFile) : VaultAction
+    data class RenamePdf(val pdf: PdfFile, val newName: String) : VaultAction
+}
+
 @HiltViewModel
 class VaultViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -35,7 +47,6 @@ class VaultViewModel @Inject constructor(
     val vaultPdfs = repository.getManagedPdfs(parentId = null, isVault = true)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // 🌟 2026 FIX: RAM bachaane ke liye on-demand list loading
     private val _pickerPdfs = MutableStateFlow<List<PdfFile>?>(null)
     val pickerPdfs = _pickerPdfs.asStateFlow()
 
@@ -45,24 +56,42 @@ class VaultViewModel @Inject constructor(
     private val _decryptionProgress = MutableStateFlow<Float?>(null)
     val decryptionProgress = _decryptionProgress.asStateFlow()
 
-    fun loadPublicPdfsForPicker() {
-        viewModelScope.launch(Dispatchers.IO) {
-            _pickerPdfs.value = repository.getAllPdfs(com.edu.pdf.domain.model.SortType.DATE_DESC).first()
+    // 🌟 MVI ACTION HANDLER
+    fun onAction(action: VaultAction) {
+        when (action) {
+            is VaultAction.LoadPublicPdfs -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    _pickerPdfs.value = repository.getAllPdfs(com.edu.pdf.domain.model.SortType.DATE_DESC).first()
+                }
+            }
+            is VaultAction.ClosePicker -> {
+                _pickerPdfs.value = null
+            }
+            is VaultAction.ToggleViewMode -> {
+                viewModelScope.launch {
+                    val currentGridState = userPreferences.isFolderGridViewFlow.first()
+                    userPreferences.saveFolderGridViewPreference(!currentGridState)
+                }
+            }
+            is VaultAction.OpenPdf -> {
+                getDecryptedPathForViewing(action.pdfPath, action.onReady)
+            }
+            is VaultAction.MoveToVault -> {
+                viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(action.pdfIds, null, isVault = true) }
+            }
+            is VaultAction.RemoveFromVault -> {
+                viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(listOf(action.pdfId), null, isVault = false) }
+            }
+            is VaultAction.DeletePdf -> {
+                viewModelScope.launch(Dispatchers.IO) { deletePdfsUseCase(listOf(action.pdf)) }
+            }
+            is VaultAction.RenamePdf -> {
+                viewModelScope.launch(Dispatchers.IO) { renamePdfUseCase(action.pdf, action.newName) }
+            }
         }
     }
 
-    fun closePicker() {
-        _pickerPdfs.value = null
-    }
-
-    fun toggleViewMode() {
-        viewModelScope.launch {
-            val currentGridState = userPreferences.isFolderGridViewFlow.first()
-            userPreferences.saveFolderGridViewPreference(!currentGridState)
-        }
-    }
-
-    fun getDecryptedPathForViewing(pdfPath: String, onReady: (String) -> Unit) {
+    private fun getDecryptedPathForViewing(pdfPath: String, onReady: (String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             _decryptionProgress.value = 0f
             val lockedFile = File(pdfPath)
@@ -105,9 +134,4 @@ class VaultViewModel @Inject constructor(
             }
         }
     }
-
-    fun moveFromAppToVault(pdfIds: List<String>) { viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(pdfIds, null, isVault = true) } }
-    fun removeFromVault(pdfId: String) { viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(listOf(pdfId), null, isVault = false) } }
-    fun deletePdf(pdf: PdfFile) { viewModelScope.launch(Dispatchers.IO) { deletePdfsUseCase(listOf(pdf)) } }
-    fun renamePdf(pdf: PdfFile, newName: String) { viewModelScope.launch(Dispatchers.IO) { renamePdfUseCase(pdf, newName) } }
 }

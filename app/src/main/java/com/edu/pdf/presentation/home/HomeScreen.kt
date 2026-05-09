@@ -1,7 +1,6 @@
 @file:Suppress("DEPRECATION")
 package com.edu.pdf.presentation.home
 
-import android.app.Activity
 import android.content.Intent
 import android.os.Environment
 import android.provider.Settings
@@ -60,6 +59,7 @@ import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBar
 import com.edu.pdf.presentation.common.PremiumNavigationRail
 import com.edu.pdf.presentation.common.UniversalTopBar
+import com.edu.pdf.presentation.folders.getActivity
 import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
@@ -141,7 +141,7 @@ fun HomeScreenWrapper(
 }
 @OptIn(
     androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi::class,
-    androidx.compose.material3.ExperimentalMaterial3Api::class // 🌟 Ye line add karne se saari warning gayab ho jayengi
+    androidx.compose.material3.ExperimentalMaterial3Api::class
 )
 @Composable
 fun HomeScreenPure(
@@ -159,11 +159,11 @@ fun HomeScreenPure(
     val haptic = LocalHapticFeedback.current
     var currentTab by rememberSaveable { mutableIntStateOf(1) }
     val context = LocalContext.current
-    // 🌟 2026 ARCHITECT FIX: Screen Size Detection
-    val windowSizeClass = calculateWindowSizeClass(activity = context as Activity)
-    val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
-    // 🌟 GOD MODE ARCHITECTURE: Pager state ko upar shift kiya taaki Top Bar aur Content sync rahein
+
+    val windowSizeClass = calculateWindowSizeClass(activity = context.getActivity() ?: return)
+    val isExpandedScreen = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
+
     val pagerState = rememberPagerState(pageCount = { 3 }, initialPage = 1)
     val coroutineScope = rememberCoroutineScope()
 
@@ -232,65 +232,59 @@ fun HomeScreenPure(
             }
         },
         bottomBar = {
-            // ==========================================
-            // 🌟 2026 TABLET LOGIC: Bottom Bar Visibility
-            // ==========================================
-            // Agar device Phone hai (!isTablet), tabhi ye neeche wala bar dikhega
-            if (!isTablet) {
-                AnimatedContent(
-                    targetState = isSelectionMode,
-                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                    label = "BottomBarTransition"
-                ) { selectionMode ->
-                    if (selectionMode) {
-                        // 🌟 GOD MODE UI CACHING (Tumhara original brilliant code)
-                        val selectedIdsSet by remember(selectedPdfs) {
-                            androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
-                        }
-                        val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                            androidx.compose.runtime.derivedStateOf {
-                                if (selectedIdsSet.isEmpty()) emptyList()
-                                else currentTabItems.filter { it.id in selectedIdsSet }
-                            }
-                        }
-
-                        ActionBottomBar(
-                            selectedItems = selectedItemsList,
-                            tabIndex = currentTab,
-                            onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                            onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                            onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                            onShare = {
-                                val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                                if (pdfUris.isNotEmpty()) {
-                                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                        type = "application/pdf"
-                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                                }
-                            },
-                            onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                            onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                        )
-                    } else {
-                        PremiumBottomBar(navController = navController)
+            // 🌟 THE ELITE FIX: Smart Bottom Bar Handling
+            // Agar Selection Mode ON hai, toh screen size chahe jo ho, ActionBar dikhao.
+            // Agar normal mode hai aur screen choti hai (Phone), toh PremiumBottomBar dikhao.
+            AnimatedContent(
+                targetState = isSelectionMode,
+                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
+                label = "BottomBarTransition"
+            ) { selectionMode ->
+                if (selectionMode) {
+                    val selectedIdsSet by remember(selectedPdfs) {
+                        androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
                     }
+                    val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
+                        androidx.compose.runtime.derivedStateOf {
+                            if (selectedIdsSet.isEmpty()) emptyList()
+                            else currentTabItems.filter { it.id in selectedIdsSet }
+                        }
+                    }
+
+                    ActionBottomBar(
+                        selectedItems = selectedItemsList,
+                        tabIndex = currentTab,
+                        onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                        onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                        onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                        onShare = {
+                            val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                            if (pdfUris.isNotEmpty()) {
+                                val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                    type = "application/pdf"
+                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                            }
+                        },
+                        onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                        onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                    )
+                } else if (!isExpandedScreen) {
+                    PremiumBottomBar(navController = navController)
                 }
             }
         }
     ) { paddingValues ->
-        // ==========================================
-        // 🌟 2026 TABLET LOGIC: Side-by-Side Split View
-        // ==========================================
+        // 🌟 THE ELITE FIX: Smooth Side-by-Side UI for Tablets
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues) // Scaffold ki padding Row par apply karni hai
+                .padding(paddingValues)
         ) {
-            // Agar Tablet hai aur user files select nahi kar raha hai, toh side mein Rail dikhao
-            if (isTablet && !isSelectionMode) {
+            // Agar screen badi hai (Tablet) aur user selection nahi kar raha, tab Rail dikhao
+            if (isExpandedScreen && !isSelectionMode) {
                 PremiumNavigationRail(navController = navController)
             }
 
@@ -299,8 +293,7 @@ fun HomeScreenPure(
                 isRefreshing = isRefreshing,
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
-                // 🌟 PRO FIX: Kyunki padding Row le chuka hai, isko 0.dp deni hai warna layout uper-neeche katega
-                paddingValues = PaddingValues(0.dp),
+                paddingValues = PaddingValues(0.dp), // Padding already Row par lag chuki hai
                 pagerState = pagerState,
                 onAction = onAction,
                 onToggleSelection = onToggleSelection,

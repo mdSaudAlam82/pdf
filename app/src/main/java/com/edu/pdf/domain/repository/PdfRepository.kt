@@ -36,5 +36,5 @@ interface PdfRepository {
 
     fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>>
 
-    fun getPaginatedPdfsInPhysicalFolder(folderPath: String): kotlinx.coroutines.flow.Flow<androidx.paging.PagingData<com.edu.pdf.domain.model.PdfFile>>
+    fun getPaginatedPdfsInPhysicalFolder(folderPath: String): Flow<androidx.paging.PagingData<PdfFile>>
 }

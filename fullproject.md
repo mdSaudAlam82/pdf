@@ -612,6 +612,28 @@ interface PdfDao {
     // 🌟 THE VAULT FIX: Naya ID aur Path update karne ke liye
     @Query("UPDATE pdf_table SET id = :newId, path = :newPath WHERE id = :oldId")
     suspend fun updatePdfIdAndPath(oldId: String, newId: String, newPath: String)
+    // ==========================================
+    // 🌟 2026 ARCHITECT FIX: PHYSICAL FOLDER QUERY
+    // ==========================================
+    // Ye query directly database se wahi files layegi jo specific folder mein hain. No OOM Crash!
+    @Query("""
+        SELECT * FROM pdf_table 
+        WHERE path LIKE :folderPath || '/%' 
+        AND path NOT LIKE :folderPath || '/%/%' 
+        AND isVault = 0 
+        ORDER BY lastModified DESC
+    """)
+    fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfEntity>>
+
+    // 🌟 2026 ARCHITECT FIX: Paging 3 Engine for Smooth 120fps Scrolling
+    @Query("""
+        SELECT * FROM pdf_table 
+        WHERE path LIKE :folderPath || '/%' 
+        AND path NOT LIKE :folderPath || '/%/%' 
+        AND isVault = 0 
+        ORDER BY lastModified DESC
+    """)
+    fun getPaginatedPdfsInPhysicalFolder(folderPath: String): androidx.paging.PagingSource<Int, PdfEntity>
 }
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\dao\SearchHistoryDao.kt
@@ -842,6 +864,7 @@ class UserPreferences @Inject constructor(
 package com.edu.pdf.data.repository
 
 import androidx.core.net.toUri
+import androidx.paging.map
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.edu.pdf.data.local.dao.PdfDao
 import com.edu.pdf.data.local.dao.SearchHistoryDao
@@ -1069,6 +1092,25 @@ class PdfRepositoryImpl @Inject constructor(
 
     override suspend fun searchPdfsFast(query: String, isVault: Boolean): List<PdfFile> {
         return pdfDao.searchPdfsFast(query, isVault).map { it.toDomainModel() }
+    }
+    override fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>> {
+        return pdfDao.getPdfsInPhysicalFolder(folderPath).map { list ->
+            list.map { it.toDomainModel() }
+        }
+    }
+
+    override fun getPaginatedPdfsInPhysicalFolder(folderPath: String): Flow<androidx.paging.PagingData<PdfFile>> {
+        return androidx.paging.Pager(
+            config = androidx.paging.PagingConfig(
+                pageSize = 20, // 🌟 Ek baar mein sirf 20 PDF memory mein load honge
+                prefetchDistance = 5, // 🌟 User ke end tak pahunchne se 5 item pehle hi agla page load ho jayega (Zero Lag!)
+                enablePlaceholders = false
+            ),
+            pagingSourceFactory = { pdfDao.getPaginatedPdfsInPhysicalFolder(folderPath) }
+        ).flow.map { pagingData ->
+            // Entity ko tumhare clean Domain Model mein convert kar rahe hain
+            pagingData.map { it.toDomainModel() }
+        }
     }
 }
 ``n
@@ -1837,7 +1879,9 @@ interface PdfRepository {
     suspend fun searchPdfsFast(query: String, isVault: Boolean): List<PdfFile>
     fun getSecureVaultStreamUri(encryptedPath: String): String
 
+    fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>>
 
+    fun getPaginatedPdfsInPhysicalFolder(folderPath: String): Flow<androidx.paging.PagingData<PdfFile>>
 }
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\usecase\CreateFolderUseCase.kt
@@ -1922,6 +1966,7 @@ class ScanPdfsUseCase @Inject constructor(
 ``kotlin
 package com.edu.pdf.presentation.common
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Folder
@@ -1932,6 +1977,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -1992,6 +2040,49 @@ fun PremiumBottomBar(navController: NavHostController) {
                     selectedIconColor = MaterialTheme.colorScheme.primary,
                     selectedTextColor = MaterialTheme.colorScheme.primary,
                     indicatorColor = androidx.compose.ui.graphics.Color.Transparent, // 🌟 THE ELITE FIX: Red pill shadow removed!
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            )
+        }
+    }
+}
+@Composable
+fun PremiumNavigationRail(navController: NavHostController) {
+    val items = listOf(
+        BottomNavItem("Home", Icons.Default.Home, Screen.Home),
+        BottomNavItem("Folders", Icons.Default.Folder, Screen.Folders),
+        BottomNavItem("Tools", Icons.Default.AutoFixHigh, Screen.Tools),
+        BottomNavItem("Settings", Icons.Default.Settings, Screen.Settings)
+    )
+
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
+
+    NavigationRail(
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = androidx.compose.ui.Modifier.padding(top = 16.dp)
+    ) {
+        items.forEach { item ->
+            val isSelected = currentDestination?.hierarchy?.any { it.hasRoute(item.route::class) } == true
+
+            NavigationRailItem(
+                icon = { Icon(imageVector = item.icon, contentDescription = item.title) },
+                label = { Text(text = item.title) },
+                selected = isSelected,
+                onClick = {
+                    if (!isSelected) {
+                        navController.navigate(item.route) {
+                            popUpTo(Screen.Home) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                },
+                colors = NavigationRailItemDefaults.colors( // 🌟 Yahan galti thi, ise theek kar diya
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3245,6 +3336,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.paging.compose.collectAsLazyPagingItems
 
 @Composable
 fun UnifiedFolderScreen(
@@ -3257,6 +3349,7 @@ fun UnifiedFolderScreen(
     selectionViewModel: SelectionViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val pagedPhysicalItems = viewModel.pagedPhysicalItems.collectAsLazyPagingItems()
     val foldersTree by homeViewModel.foldersTree.collectAsStateWithLifecycle()
     val isSelectionMode by selectionViewModel.isSelectionMode.collectAsStateWithLifecycle()
     val selectedPdfs by selectionViewModel.selectedPdfs.collectAsStateWithLifecycle()
@@ -3434,18 +3527,42 @@ fun UnifiedFolderScreen(
                     }
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-                        items(uiState.items, key = { it.id }) { item ->
-                            UnifiedListItem(
-                                item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
-                                onAction = { action ->
-                                    when (action) {
-                                        is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
-                                        is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
-                                        else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
-                                    }
-                                },
-                                onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
-                            )
+                        // 🌟 2026 PRO UX: Agar ye Paging wala data hai (Physical Folder)
+                        if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
+                            items(
+                                count = pagedPhysicalItems.itemCount,
+                                key = { index -> pagedPhysicalItems[index]?.id ?: index }
+                            ) { index ->
+                                val item = pagedPhysicalItems[index]
+                                if (item != null) {
+                                    UnifiedListItem(
+                                        item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                        onAction = { action ->
+                                            when (action) {
+                                                is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                                is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
+                                                else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
+                                            }
+                                        },
+                                        onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                    )
+                                }
+                            }
+                        } else {
+                            // Virtual aur Vault Folders ke liye purana method
+                            items(uiState.items, key = { it.id }) { item ->
+                                UnifiedListItem(
+                                    item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                    onAction = { action ->
+                                        when (action) {
+                                            is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                            is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
+                                            else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
+                                        }
+                                    },
+                                    onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                )
+                            }
                         }
                     }
                 }
@@ -3629,6 +3746,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
+import androidx.paging.cachedIn
+import androidx.paging.map
 import com.edu.pdf.data.preferences.UserPreferences
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
@@ -3646,10 +3765,19 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import javax.inject.Inject
 
 sealed interface UnifiedFolderSheetState {
@@ -3728,11 +3856,26 @@ class UnifiedFolderViewModel @Inject constructor(
     private val _sortType = MutableStateFlow(SortType.DATE_DESC)
     private val _internalState = MutableStateFlow(UnifiedFolderUiState(folderId = currentFolderId, folderName = args.folderName, folderType = currentFolderType))
 
+    val pagedPhysicalItems = repository.getPaginatedPdfsInPhysicalFolder(actualFolderId ?: "")
+        .map { pagingData ->
+            pagingData.map { pdfFile ->
+                HomeItem.PdfItem(pdfFile) as HomeItem
+            }
+        }
+        .cachedIn(viewModelScope) // 🌟 Ye RAM ko optimize karta hai
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val physicalItemsFlow = _sortType.flatMapLatest { sort ->
-        repository.getAllPdfs(sort).map { allPdfs ->
-            allPdfs.filter { File(it.path).parentFile?.absolutePath == currentFolderId }
-                .map { HomeItem.PdfItem(it) }.toImmutableList()
+        repository.getPdfsInPhysicalFolder(currentFolderId).map { pdfs ->
+            val sortedPdfs = when(sort) {
+                SortType.NAME_ASC -> pdfs.sortedBy { it.name.lowercase() }
+                SortType.NAME_DESC -> pdfs.sortedByDescending { it.name.lowercase() }
+                SortType.SIZE_DESC -> pdfs.sortedByDescending { it.sizeInBytes }
+                SortType.SIZE_ASC -> pdfs.sortedBy { it.sizeInBytes }
+                SortType.DATE_ASC -> pdfs.sortedBy { it.lastModified }
+                SortType.DATE_DESC -> pdfs.sortedByDescending { it.lastModified }
+            }
+            sortedPdfs.map { HomeItem.PdfItem(it) }.toImmutableList()
         }
     }
 
@@ -5020,6 +5163,7 @@ fun HomeHierarchicalMovePickerSheet(
 @file:Suppress("DEPRECATION")
 package com.edu.pdf.presentation.home
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Environment
 import android.provider.Settings
@@ -5036,6 +5180,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -5043,12 +5189,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
+import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -5073,6 +5220,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBar
+import com.edu.pdf.presentation.common.PremiumNavigationRail
 import com.edu.pdf.presentation.common.UniversalTopBar
 import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.HomeContent
@@ -5153,7 +5301,10 @@ fun HomeScreenWrapper(
         }
     }
 }
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(
+    androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class // 🌟 Ye line add karne se saari warning gayab ho jayengi
+)
 @Composable
 fun HomeScreenPure(
     state: HomeUiState,
@@ -5170,6 +5321,9 @@ fun HomeScreenPure(
     val haptic = LocalHapticFeedback.current
     var currentTab by rememberSaveable { mutableIntStateOf(1) }
     val context = LocalContext.current
+    // 🌟 2026 ARCHITECT FIX: Screen Size Detection
+    val windowSizeClass = calculateWindowSizeClass(activity = context as Activity)
+    val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     // 🌟 GOD MODE ARCHITECTURE: Pager state ko upar shift kiya taaki Top Bar aur Content sync rahein
     val pagerState = rememberPagerState(pageCount = { 3 }, initialPage = 1)
@@ -5240,60 +5394,81 @@ fun HomeScreenPure(
             }
         },
         bottomBar = {
-            AnimatedContent(
-                targetState = isSelectionMode,
-                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                label = "BottomBarTransition"
-            ) { selectionMode ->
-                if (selectionMode) {
-                    // 🌟 GOD MODE UI CACHING
-                    val selectedIdsSet by remember(selectedPdfs) {
-                        androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
-                    }
-                    val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                        androidx.compose.runtime.derivedStateOf {
-                            if (selectedIdsSet.isEmpty()) emptyList()
-                            else currentTabItems.filter { it.id in selectedIdsSet }
+            // ==========================================
+            // 🌟 2026 TABLET LOGIC: Bottom Bar Visibility
+            // ==========================================
+            // Agar device Phone hai (!isTablet), tabhi ye neeche wala bar dikhega
+            if (!isTablet) {
+                AnimatedContent(
+                    targetState = isSelectionMode,
+                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
+                    label = "BottomBarTransition"
+                ) { selectionMode ->
+                    if (selectionMode) {
+                        // 🌟 GOD MODE UI CACHING (Tumhara original brilliant code)
+                        val selectedIdsSet by remember(selectedPdfs) {
+                            androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
                         }
-                    }
-
-                    ActionBottomBar(
-                        selectedItems = selectedItemsList,
-                        tabIndex = currentTab,
-                        onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                        onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                        onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                        onShare = {
-                            val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                            if (pdfUris.isNotEmpty()) {
-                                val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                    type = "application/pdf"
-                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                        val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
+                            androidx.compose.runtime.derivedStateOf {
+                                if (selectedIdsSet.isEmpty()) emptyList()
+                                else currentTabItems.filter { it.id in selectedIdsSet }
                             }
-                        },
-                        onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                        onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                    )
-                } else {
-                    PremiumBottomBar(navController = navController)
+                        }
+
+                        ActionBottomBar(
+                            selectedItems = selectedItemsList,
+                            tabIndex = currentTab,
+                            onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                            onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                            onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                            onShare = {
+                                val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                                if (pdfUris.isNotEmpty()) {
+                                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                        type = "application/pdf"
+                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                                }
+                            },
+                            onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                            onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                        )
+                    } else {
+                        PremiumBottomBar(navController = navController)
+                    }
                 }
             }
         }
     ) { paddingValues ->
-        HomeContent(
-            state = state,
-            isRefreshing = isRefreshing,
-            isSelectionMode = isSelectionMode,
-            selectedPdfs = selectedPdfs,
-            paddingValues = paddingValues,
-            pagerState = pagerState, // 🌟 Naya parameter pass kar rahe hain
-            onAction = onAction,
-            onToggleSelection = onToggleSelection,
-            onSelectionModeChange = onSelectionModeChange
-        )
+        // ==========================================
+        // 🌟 2026 TABLET LOGIC: Side-by-Side Split View
+        // ==========================================
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues) // Scaffold ki padding Row par apply karni hai
+        ) {
+            // Agar Tablet hai aur user files select nahi kar raha hai, toh side mein Rail dikhao
+            if (isTablet && !isSelectionMode) {
+                PremiumNavigationRail(navController = navController)
+            }
+
+            HomeContent(
+                state = state,
+                isRefreshing = isRefreshing,
+                isSelectionMode = isSelectionMode,
+                selectedPdfs = selectedPdfs,
+                // 🌟 PRO FIX: Kyunki padding Row le chuka hai, isko 0.dp deni hai warna layout uper-neeche katega
+                paddingValues = PaddingValues(0.dp),
+                pagerState = pagerState,
+                onAction = onAction,
+                onToggleSelection = onToggleSelection,
+                onSelectionModeChange = onSelectionModeChange
+            )
+        }
     }
 }
 @Composable
@@ -8427,6 +8602,7 @@ android {
     defaultConfig {
         applicationId = "com.edu.pdf"
         minSdk = 33
+        //noinspection OldTargetApi
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -8500,6 +8676,10 @@ dependencies {
     implementation(libs.work.runtime.ktx)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
+    implementation(libs.room.paging)
+    implementation(libs.androidx.windowsizeclass)
 }
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
@@ -8540,6 +8720,8 @@ work = "2.11.2"
 hiltWork = "1.3.0"
 biometric = "1.2.0-alpha05"
 tink = "1.21.0"
+paging = "3.5.0"
+
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -8589,7 +8771,10 @@ hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.
 #biometric
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tink" }
-
+androidx-paging-runtime = { group = "androidx.paging", name = "paging-runtime", version.ref = "paging" }
+androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version.ref = "paging" }
+room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
+androidx-windowsizeclass = { group = "androidx.compose.material3", name = "material3-window-size-class" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

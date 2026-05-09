@@ -118,6 +118,7 @@ interface PdfDao {
         JOIN pdf_fts_table ON pdf_table.roomId = pdf_fts_table.rowid 
         WHERE pdf_fts_table MATCH :query || '*' AND pdf_table.isVault = 0
         ORDER BY pdf_table.lastModified DESC
+        LIMIT 50 -- 🌟 THE ELITE FIX: UI freeze hone se bachayega
     """)
     fun searchPdfsInDatabase(query: String): Flow<List<PdfEntity>>
 
@@ -137,7 +138,12 @@ interface PdfDao {
     @Query("DELETE FROM pdf_table WHERE path IN (:paths)")
     suspend fun deletePdfsByPaths(paths: List<String>)
 
-    @Query("SELECT * FROM pdf_table WHERE name LIKE '%' || :query || '%' AND isVault = :isVault ORDER BY lastModified DESC")
+    @Query("""
+        SELECT * FROM pdf_table 
+        WHERE name LIKE '%' || :query || '%' AND isVault = :isVault 
+        ORDER BY lastModified DESC 
+        LIMIT 50 -- 🌟 THE ELITE FIX: RAM bachaane ke liye
+    """)
     suspend fun searchPdfsFast(query: String, isVault: Boolean): List<PdfEntity>
 
     // 🌟 THE VAULT FIX: Naya ID aur Path update karne ke liye

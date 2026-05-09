@@ -41,20 +41,43 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+// 🌟 THE ELITE FIX: Hilt-aware wrapper for Navigation Graph
 @Composable
 fun VaultScreen(
     onBack: () -> Unit,
     onPdfClick: (String) -> Unit,
     viewModel: VaultViewModel = hiltViewModel()
 ) {
-    val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-
     val vaultPdfs by viewModel.vaultPdfs.collectAsStateWithLifecycle()
-    val pickerPdfs by viewModel.pickerPdfs.collectAsStateWithLifecycle() // 🌟 NAYA: On-demand list
+    val pickerPdfs by viewModel.pickerPdfs.collectAsStateWithLifecycle()
     val decryptionProgress by viewModel.decryptionProgress.collectAsStateWithLifecycle()
     val isGridView by viewModel.isGridView.collectAsStateWithLifecycle()
+
+    VaultScreenPure(
+        vaultPdfs = vaultPdfs,
+        pickerPdfs = pickerPdfs,
+        decryptionProgress = decryptionProgress,
+        isGridView = isGridView,
+        onBack = onBack,
+        onPdfClick = onPdfClick,
+        onAction = viewModel::onAction
+    )
+}
+
+// 🌟 THE ELITE FIX: Pure UI Component (Testable & Previewable)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VaultScreenPure(
+    vaultPdfs: List<PdfFile>,
+    pickerPdfs: List<PdfFile>?,
+    decryptionProgress: Float?,
+    isGridView: Boolean,
+    onBack: () -> Unit,
+    onPdfClick: (String) -> Unit,
+    onAction: (VaultAction) -> Unit
+) {
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
 
     var selectedPdfForActions by remember { mutableStateOf<PdfFile?>(null) }
 
@@ -70,7 +93,7 @@ fun VaultScreen(
                 actions = {
                     IconButton(onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                        viewModel.toggleViewMode()
+                        onAction(VaultAction.ToggleViewMode)
                     }) {
                         Icon(
                             imageVector = if (isGridView) Icons.AutoMirrored.Rounded.ViewList else Icons.Rounded.GridView,
@@ -79,8 +102,7 @@ fun VaultScreen(
                     }
                     IconButton(onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                        // 🌟 Data sirf tab load hoga jab click karoge
-                        viewModel.loadPublicPdfsForPicker()
+                        onAction(VaultAction.LoadPublicPdfs)
                     }) {
                         Icon(Icons.Rounded.Add, contentDescription = "Add PDF")
                     }
@@ -110,7 +132,7 @@ fun VaultScreen(
                                 pdf = pdf,
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.getDecryptedPathForViewing(pdf.path) { secureUri -> onPdfClick(secureUri) }
+                                    onAction(VaultAction.OpenPdf(pdf.path) { secureUri -> onPdfClick(secureUri) })
                                 },
                                 onLongClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -131,7 +153,7 @@ fun VaultScreen(
                                 pdf = pdf,
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.getDecryptedPathForViewing(pdf.path) { secureUri -> onPdfClick(secureUri) }
+                                    onAction(VaultAction.OpenPdf(pdf.path) { secureUri -> onPdfClick(secureUri) })
                                 },
                                 onLongClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -177,11 +199,11 @@ fun VaultScreen(
 
     if (pickerPdfs != null) {
         VaultAppPickerSheet(
-            pdfs = pickerPdfs!!,
-            onDismiss = { viewModel.closePicker() }, // 🌟 RAM Clear
+            pdfs = pickerPdfs,
+            onDismiss = { onAction(VaultAction.ClosePicker) },
             onPdfSelected = { pdf ->
-                viewModel.moveFromAppToVault(listOf(pdf.id))
-                viewModel.closePicker() // Hide the picker
+                onAction(VaultAction.MoveToVault(listOf(pdf.id)))
+                onAction(VaultAction.ClosePicker)
             }
         )
     }
@@ -193,23 +215,25 @@ fun VaultScreen(
             onFavoriteToggle = { },
             onShare = { },
             onRenameConfirm = { newName ->
-                viewModel.renamePdf(pdf, newName)
+                onAction(VaultAction.RenamePdf(pdf, newName))
                 selectedPdfForActions = null
             },
             onDelete = {
-                viewModel.deletePdf(pdf)
+                onAction(VaultAction.DeletePdf(pdf))
                 selectedPdfForActions = null
             },
             onDetails = { },
             onActionClick = { actionName ->
                 if (actionName.contains("Restore", ignoreCase = true) || actionName.contains("Move", ignoreCase = true) || actionName.contains("Remove", ignoreCase = true)) {
-                    viewModel.removeFromVault(pdf.id)
+                    onAction(VaultAction.RemoveFromVault(pdf.id))
                 }
                 selectedPdfForActions = null
             }
         )
     }
 }
+
+// ... Baaki code (VaultAppPickerSheet, VaultPdfListItem, VaultPdfGridItem) waise hi rehne dein ...
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
