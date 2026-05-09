@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 🌟 L8 FIX: Compose ke liye ek simple Base Theme -->
+    <style name="Theme.AppBase" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+
+    <!-- 🌟 L8 Magic: Splash Screen Theme -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Background Color -->
+        <item name="windowSplashScreenBackground">@android:color/white</item>
+
+        <!-- App ka Icon -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+
+        <!-- Splash ke baad Original Theme par wapas jana (Ab ye red nahi hoga!) -->
+        <item name="postSplashScreenTheme">@style/Theme.AppBase</item>
+    </style>
+</resources>
