@@ -13,8 +13,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
+import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,10 +38,12 @@ import com.edu.pdf.presentation.folders.UnifiedFolderScreen
 import com.edu.pdf.presentation.folders.vault.VaultScreen
 import com.edu.pdf.presentation.home.HomeScreenWrapper
 import com.edu.pdf.presentation.home.HomeViewModel
-import com.edu.pdf.presentation.home.selection.SelectionViewModel
 import com.edu.pdf.presentation.navigation.Screen
 import com.edu.pdf.presentation.pdfviewer.PdfViewerScreen
 import com.edu.pdf.presentation.search.SearchScreen
+import kotlinx.coroutines.launch
+import androidx.navigation.NavType
+import kotlin.reflect.typeOf
 
 // 🌟 GATEWAY HELPER: PURE Android 13+ (MinSdk 33) Logic
 fun hasStoragePermission(): Boolean {
@@ -80,19 +87,76 @@ fun MainAppScreen() {
     }
 }
 
+@OptIn(ExperimentalMaterial3AdaptiveApi::class)
 fun NavGraphBuilder.homeSection(navController: NavHostController) {
     composable<Screen.Home> {
-        // 🌟 LAZY INJECTION: ViewModel tabhi banega jab permission mil jayegi aur Home khulega!
-        // Isse app crash ya hang bilkul nahi hoga.
-        val homeViewModel: HomeViewModel = hiltViewModel()
-        val selectionViewModel: SelectionViewModel = hiltViewModel()
+        val navigator = rememberListDetailPaneScaffoldNavigator<Any>()
+        val scope = rememberCoroutineScope()
 
-        HomeScreenWrapper(
-            viewModel = homeViewModel,
-            selectionViewModel = selectionViewModel,
-            navController = navController,
-            onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
-            onSearchClick = { navController.navigate(Screen.Search) }
+        NavigableListDetailPaneScaffold(
+            navigator = navigator,
+            listPane = {
+                val homeViewModel: HomeViewModel = hiltViewModel()
+                HomeScreenWrapper(
+                    viewModel = homeViewModel,
+                    navController = navController,
+                    onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
+                    onSearchClick = { navController.navigate(Screen.Search) },
+
+                    onFolderClick = { folderId, folderName, folderType ->
+                        // 🌟 THE ELITE FIX 1: No manual Uri.encode! Type-Safe navigation handles it.
+                        // 🌟 THE ELITE FIX 2: Direct navController use kiya taaki SavedStateHandle me
+                        //    sahi data jaye aur Blank Screen (white page) ka issue permanently solve ho jaye!
+                        navController.navigate(Screen.UnifiedFolder(folderId, folderName, folderType))
+                    }
+                )
+            },
+            detailPane = {
+                val folderArgs = navigator.currentDestination?.contentKey as? Screen.UnifiedFolder
+
+                if (folderArgs != null) {
+                    androidx.compose.runtime.key(folderArgs.folderId) {
+                        UnifiedFolderScreen(
+                            onBack = {
+                                scope.launch { if (navigator.canNavigateBack()) navigator.navigateBack() }
+                            },
+                            onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
+                            onFolderNavigate = { id, name, type ->
+                                scope.launch {
+                                    navigator.navigateTo(
+                                        ListDetailPaneScaffoldRole.Detail,
+                                        contentKey = Screen.UnifiedFolder(
+                                            android.net.Uri.encode(id),
+                                            android.net.Uri.encode(name),
+                                            type
+                                        )
+                                    )
+                                }
+                            },
+                            onBreadcrumbNavigate = { folder ->
+                                scope.launch {
+                                    if (folder == null) {
+                                        if (navigator.canNavigateBack()) navigator.navigateBack()
+                                    } else {
+                                        navigator.navigateTo(
+                                            ListDetailPaneScaffoldRole.Detail,
+                                            contentKey = Screen.UnifiedFolder(
+                                                android.net.Uri.encode(folder.folderId),
+                                                android.net.Uri.encode(folder.name),
+                                                FolderType.VIRTUAL_HUB
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Select a folder to view contents", color = Color.Gray)
+                    }
+                }
+            }
         )
     }
 }
@@ -105,23 +169,20 @@ fun NavGraphBuilder.pdfViewerSection(navController: NavHostController) {
     composable<Screen.PdfViewer> { backStackEntry -> backStackEntry.toRoute<Screen.PdfViewer>(); PdfViewerScreen(onBack = { navController.popBackStack() }) }
 }
 
-// ... MainAppScreen.kt ke andar foldersSection block dhundhein aur isse replace karein ...
-
 fun NavGraphBuilder.foldersSection(navController: NavHostController) {
     composable<Screen.Folders> {
         Scaffold(
             bottomBar = { PremiumBottomBar(navController) },
-            containerColor = MaterialTheme.colorScheme.background // 🌟 Background color match kiya
+            containerColor = MaterialTheme.colorScheme.background
         ) { padding ->
-            // 🌟 GOD MODE FIX: Double Padding (Mota Top Bar) hatane ke liye
-            // Hum sirf `bottom = padding.calculateBottomPadding()` use kar rahe hain.
             Box(modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
                 FoldersScreen(
                     onFolderClick = { path, name ->
                         if (path == "vault_root") {
                             navController.navigate(Screen.Vault)
                         } else {
-                            navController.navigate(Screen.UnifiedFolder(path, name, FolderType.PHYSICAL_DEVICE))
+                            // 🌟 FOLDER OPEN HOTE WAQT SLASHES KO ENCODE KIYA HAI
+                            navController.navigate(Screen.UnifiedFolder(android.net.Uri.encode(path), android.net.Uri.encode(name), FolderType.PHYSICAL_DEVICE))
                         }
                     }
                 )
@@ -129,9 +190,6 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController) {
         }
     }
 
-    // 🌟 (Iske neeche tumhara Screen.Vault aur Screen.UnifiedFolder wala code waisa ka waisa hi rahega)
-
-    // 🌟 NAYA: Dedicated Vault Navigation Block
     composable<Screen.Vault>(
         enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(350)) },
         exitTransition = { fadeOut(animationSpec = tween(200)) },
@@ -144,18 +202,26 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController) {
         )
     }
 
+    // 🌟 YAHAN SE TYPE-MAP HATA DIYA GAYA HAI
+    // ... Inside foldersSection()
+    // 🌟 FIX: Restored the typeMap! Enums MUST have this to avoid navigation serialization crashes.
     composable<Screen.UnifiedFolder>(
+        typeMap = mapOf(typeOf<FolderType>() to NavType.EnumType(FolderType::class.java)),
         enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(350)) },
         exitTransition = { fadeOut(animationSpec = tween(200)) },
         popEnterTransition = { fadeIn(animationSpec = tween(200)) },
         popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(350)) }
     ) { backStackEntry ->
+// ... rest of the code ...
         val args = backStackEntry.toRoute<Screen.UnifiedFolder>()
 
         UnifiedFolderScreen(
             onBack = { navController.popBackStack() },
             onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
-            onFolderNavigate = { id, name, type -> navController.navigate(Screen.UnifiedFolder(id, name, type)) },
+            onFolderNavigate = { id, name, type ->
+                // 🌟 ENCODE KARKE BHEJ RAHE HAIN
+                navController.navigate(Screen.UnifiedFolder(android.net.Uri.encode(id), android.net.Uri.encode(name), type))
+            },
             onBreadcrumbNavigate = { folder ->
                 if (folder == null) {
                     if (args.folderType == FolderType.PHYSICAL_DEVICE) {
@@ -165,7 +231,7 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController) {
                     }
                 } else {
                     val bType = FolderType.VIRTUAL_HUB
-                    navController.popBackStack(Screen.UnifiedFolder(folder.folderId, folder.name, bType), inclusive = false)
+                    navController.popBackStack(Screen.UnifiedFolder(android.net.Uri.encode(folder.folderId), android.net.Uri.encode(folder.name), bType), inclusive = false)
                 }
             }
         )

@@ -13,8 +13,11 @@ import com.edu.pdf.domain.usecase.RenamePdfUseCase
 import com.edu.pdf.domain.usecase.ScanPdfsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -53,6 +56,11 @@ data class HomeUiState(
     val currentFolderItems: ImmutableList<HomeItem> = persistentListOf(),
     val favoritePdfs: ImmutableList<PdfFile> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
+
+    // 🌟 SELECTION STATE (MVI CLEAN ARCHITECTURE)
+    val isSelectionMode: Boolean = false,
+    val selectedIds: PersistentSet<String> = persistentSetOf(),
+
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: HomeSheetState = HomeSheetState.None,
@@ -68,6 +76,12 @@ sealed interface HomeEvent {
 }
 
 sealed interface HomeAction {
+    // 🌟 SELECTION ACTIONS
+    data class ToggleSelection(val id: String) : HomeAction
+    data class SetSelectionMode(val enabled: Boolean) : HomeAction
+    data class SelectAll(val ids: List<String>) : HomeAction
+
+    // NORMAL ACTIONS
     data class NavigateToVirtualFolder(val folder: Folder) : HomeAction
     data object NavigateUp : HomeAction
     data class OpenSheet(val state: HomeSheetState) : HomeAction
@@ -117,11 +131,37 @@ class HomeViewModel @Inject constructor(
 
     private val unifiedItemsFlow = combine(
         currentFolderId.flatMapLatest { repoId -> repository.getManagedFolders(repoId, isVault = false) },
-        currentFolderId.flatMapLatest { repoId -> repository.getManagedPdfs(repoId, isVault = false) }
-    ) { folders, pdfs ->
-        val folderItems = folders.map { HomeItem.FolderItem(it) }
-        val pdfItems = pdfs.map { HomeItem.PdfItem(it) }
-        (folderItems + pdfItems).toImmutableList()
+        currentFolderId.flatMapLatest { repoId -> repository.getManagedPdfs(repoId, isVault = false) },
+        _sortType
+    ) { folders, pdfs, sort ->
+
+        val folderComparator = Comparator<Folder> { f1, f2 ->
+            when (sort) {
+                SortType.NAME_ASC -> f1.name.compareTo(f2.name, ignoreCase = true)
+                SortType.NAME_DESC -> f2.name.compareTo(f1.name, ignoreCase = true)
+                SortType.DATE_ASC -> f1.createdAt.compareTo(f2.createdAt)
+                SortType.DATE_DESC -> f2.createdAt.compareTo(f1.createdAt)
+                SortType.SIZE_ASC -> f1.pdfCount.compareTo(f2.pdfCount)
+                SortType.SIZE_DESC -> f2.pdfCount.compareTo(f1.pdfCount)
+            }
+        }
+
+        val pdfComparator = Comparator<PdfFile> { p1, p2 ->
+            when (sort) {
+                SortType.NAME_ASC -> p1.name.compareTo(p2.name, ignoreCase = true)
+                SortType.NAME_DESC -> p2.name.compareTo(p1.name, ignoreCase = true)
+                SortType.DATE_ASC -> p1.lastModified.compareTo(p2.lastModified)
+                SortType.DATE_DESC -> p2.lastModified.compareTo(p1.lastModified)
+                SortType.SIZE_ASC -> p1.sizeInBytes.compareTo(p2.sizeInBytes)
+                SortType.SIZE_DESC -> p2.sizeInBytes.compareTo(p1.sizeInBytes)
+            }
+        }
+
+        val sortedFolders = folders.sortedWith(folderComparator).map { HomeItem.FolderItem(it) }
+        val sortedPdfs = pdfs.sortedWith(pdfComparator).map { HomeItem.PdfItem(it) }
+
+        (sortedFolders + sortedPdfs).toImmutableList()
+
     }.flowOn(Dispatchers.Default)
 
     val foldersTree: StateFlow<List<Folder>> = repository.getAllManagedFolders(isVault = false)
@@ -173,7 +213,10 @@ class HomeViewModel @Inject constructor(
             sortType = prefData.second,
             breadcrumbs = prefData.third.toImmutableList()
         )
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
+    }
+        .distinctUntilChanged() // 🌟 ELITE FIX: Background processing se UI freeze nahi hoga
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
     init {
         scanDeviceForData()
@@ -185,6 +228,32 @@ class HomeViewModel @Inject constructor(
 
     fun onAction(action: HomeAction) {
         when (action) {
+            // 🌟 NAYA: Selection handle karne ka logic
+            is HomeAction.ToggleSelection -> {
+                val currentSelected = _internalState.value.selectedIds
+                val newSelection = if (currentSelected.contains(action.id)) {
+                    currentSelected.remove(action.id)
+                } else {
+                    currentSelected.add(action.id)
+                }
+                _internalState.update { it.copy(selectedIds = newSelection) }
+            }
+
+            is HomeAction.SetSelectionMode -> {
+                _internalState.update {
+                    it.copy(
+                        isSelectionMode = action.enabled,
+                        selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds
+                    )
+                }
+            }
+
+            is HomeAction.SelectAll -> {
+                val allIds = action.ids.toPersistentSet()
+                _internalState.update { it.copy(selectedIds = allIds) }
+            }
+
+            // Purane Actions
             is HomeAction.NavigateToVirtualFolder -> {
                 viewModelScope.launch(Dispatchers.IO) {
                     repository.updateFolderLastOpenedTime(action.folder.folderId, System.currentTimeMillis())
@@ -299,8 +368,8 @@ class HomeViewModel @Inject constructor(
                         repository.updateLastOpenedTime(action.pdf.id, System.currentTimeMillis())
                         _events.send(HomeEvent.NavigateToPdf(action.pdf.path))
                     } else {
-                        _events.send(HomeEvent.ShowSnackbar("File moved or deleted by another app"))
-                        scanDeviceForData()
+                        _events.send(HomeEvent.ShowSnackbar("File moved or deleted externally. Removing..."))
+                        deletePdfsUseCase(listOf(action.pdf))
                     }
                 }
             }

@@ -1,12 +1,12 @@
 package com.edu.pdf.presentation.folders
 
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +46,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -56,8 +58,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
 import com.edu.pdf.presentation.home.HomeAction
@@ -66,16 +74,6 @@ import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
 import com.edu.pdf.presentation.home.components.UnifiedListItem
-import com.edu.pdf.presentation.home.selection.SelectionViewModel
-import android.content.Intent
-import android.widget.Toast
-import androidx.core.net.toUri
-import androidx.activity.ComponentActivity
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.paging.compose.collectAsLazyPagingItems
 
 @Composable
 fun UnifiedFolderScreen(
@@ -84,48 +82,53 @@ fun UnifiedFolderScreen(
     onFolderNavigate: (String, String, FolderType) -> Unit,
     onBreadcrumbNavigate: (Folder?) -> Unit,
     viewModel: UnifiedFolderViewModel = hiltViewModel(),
-    homeViewModel: HomeViewModel = hiltViewModel(),
-    selectionViewModel: SelectionViewModel = hiltViewModel()
+    homeViewModel: HomeViewModel = hiltViewModel()
+    // 🌟 SELECTION VIEWMODEL DELETED! Ab ye Unified architecture hai
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val pagedPhysicalItems = viewModel.pagedPhysicalItems.collectAsLazyPagingItems()
     val foldersTree by homeViewModel.foldersTree.collectAsStateWithLifecycle()
-    val isSelectionMode by selectionViewModel.isSelectionMode.collectAsStateWithLifecycle()
-    val selectedPdfs by selectionViewModel.selectedPdfs.collectAsStateWithLifecycle()
+
+    // 🌟 DATA AB UI STATE SE AYEGA
+    val isSelectionMode = uiState.isSelectionMode
+    val selectedPdfs = uiState.selectedIds
+
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
-    // 🌟 GOD MODE SECURITY: Anti-Screenshot & Auto-Background Kickout
+    LaunchedEffect(viewModel.events, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is UnifiedFolderEvent.ShowSnackbar -> {
+                        Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    }
+                    is UnifiedFolderEvent.ClearMultiSelection -> {
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
+                    }
+                }
+            }
+        }
+    }
     if (uiState.folderType == FolderType.SECURE_VAULT) {
         DisposableEffect(lifecycleOwner) {
             val activity = context as? ComponentActivity
-            // 1. Block Screenshots & Screen Recording
             activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-
-            // 2. Auto-Lock Engine
             val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_PAUSE) {
-                    onBack() // App minimize hote hi bahar nikal do
-                }
+                if (event == Lifecycle.Event.ON_PAUSE) onBack()
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-
             onDispose {
-                // 3. Screenshot dobara allow kar do
                 activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                 lifecycleOwner.lifecycle.removeObserver(observer)
             }
         }
     }
-    // 🌟 GOD MODE UI CACHING
-    val selectedIdsSet by remember(selectedPdfs) {
-        androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
-    }
-    val selectedItems by remember(uiState.items, selectedIdsSet) {
+
+    val selectedItems by remember(uiState.items, selectedPdfs) {
         androidx.compose.runtime.derivedStateOf {
-            if (selectedIdsSet.isEmpty()) emptyList()
-            else uiState.items.filter { it.id in selectedIdsSet }
+            if (selectedPdfs.isEmpty()) emptyList()
+            else uiState.items.filter { it.id in selectedPdfs }
         }
     }
 
@@ -135,8 +138,7 @@ fun UnifiedFolderScreen(
 
     BackHandler {
         if (isSelectionMode) {
-            selectionViewModel.clearSelection()
-            selectionViewModel.setSelectionMode(false)
+            viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
         } else {
             onBack()
         }
@@ -145,8 +147,8 @@ fun UnifiedFolderScreen(
     val onLongPressEnableSelection: (String) -> Unit = { id ->
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (!isSelectionMode) {
-            selectionViewModel.setSelectionMode(true)
-            if (!selectedPdfs.contains(id)) selectionViewModel.toggleSelection(id)
+            viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+            if (!selectedPdfs.contains(id)) viewModel.onAction(UnifiedFolderAction.ToggleSelection(id))
         }
     }
 
@@ -158,13 +160,12 @@ fun UnifiedFolderScreen(
                     selectedCount = selectedPdfs.size,
                     totalCount = uiState.items.size,
                     onClearSelection = {
-                        selectionViewModel.clearSelection()
-                        selectionViewModel.setSelectionMode(false)
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
                     },
                     onSelectAllToggle = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        if (selectedPdfs.size == uiState.items.size) selectionViewModel.clearSelection()
-                        else selectionViewModel.selectAll(uiState.items.map { it.id })
+                        if (selectedPdfs.size == uiState.items.size) viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
+                        else viewModel.onAction(UnifiedFolderAction.SelectAll(uiState.items.map { it.id }))
                     }
                 )
             } else {
@@ -172,16 +173,14 @@ fun UnifiedFolderScreen(
                     title = uiState.folderName,
                     isGridView = uiState.isGridView,
                     canCreateSubFolders = uiState.canCreateSubFolders,
-                    isEmpty = uiState.items.isEmpty(),
-                    onBackClick = onBack,
+                    onBackClick = { onBreadcrumbNavigate(null) },
                     onAddFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
                     onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                     onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
                     onSelectClick = {
-                        selectionViewModel.setSelectionMode(true)
-                        selectionViewModel.selectAll(uiState.items.map { it.id })
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+                        viewModel.onAction(UnifiedFolderAction.SelectAll(uiState.items.map { it.id }))
                     }
-                    // 🌟 ELITE UX: Import is NO LONGER in the top bar!
                 )
             }
         },
@@ -192,11 +191,8 @@ fun UnifiedFolderScreen(
                     tabIndex = 1,
                     onDelete = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DeleteConfirm(selectedItems))) },
                     onMove = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.MovePicker(selectedItems))) },
-                    onMerge = {
-                        Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show()
-                    },
+                    onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
                     onShare = {
-                        // 🌟 2026 PRO FIX: Type inference aur toUri error fixed
                         val pdfUris = selectedItems.mapNotNull { it as? com.edu.pdf.domain.model.HomeItem.PdfItem }.map { it.pdf.id.toUri() }
                         if (pdfUris.isNotEmpty()) {
                             val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
@@ -218,28 +214,19 @@ fun UnifiedFolderScreen(
         Column(modifier = Modifier.padding(paddingValues)) {
 
             if (uiState.breadcrumbs.isNotEmpty()) {
-                UnifiedBreadcrumbs(
+                com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                     breadcrumbs = uiState.breadcrumbs,
-                    onBreadcrumbClick = { folder -> onBreadcrumbNavigate(folder) }
+                    onNavigate = { folder -> onBreadcrumbNavigate(folder) }
                 )
             }
 
             if (uiState.items.isEmpty() && !uiState.isLoading) {
-                // 🌟 ELITE UX: The NEW Pro Empty State!
                 PremiumEmptyState(
                     canImport = uiState.canImport,
                     canCreateFolder = uiState.canCreateSubFolders,
                     onImportFromDeviceClick = { filePicker.launch("application/pdf") },
-                    onImportFromAppClick = {
-                        viewModel.onAction(UnifiedFolderAction.OpenAppPdfPicker)
-
-                        // 🌟 NEXT PHASE: Ye humein app ke main PDF list pe le jayega (Move UI)
-                        viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.None))
-                        Toast.makeText(context, "Select files from Home to move here", Toast.LENGTH_LONG).show()
-                    },
-                    onCreateFolderClick = {
-                        viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId)))
-                    }
+                    onImportFromAppClick = { viewModel.onAction(UnifiedFolderAction.OpenAppPdfPicker) },
+                    onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) }
                 )
             } else {
                 if (uiState.isGridView) {
@@ -260,13 +247,12 @@ fun UnifiedFolderScreen(
                                         else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
                                     }
                                 },
-                                onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
                             )
                         }
                     }
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-                        // 🌟 2026 PRO UX: Agar ye Paging wala data hai (Physical Folder)
                         if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
                             items(
                                 count = pagedPhysicalItems.itemCount,
@@ -283,12 +269,11 @@ fun UnifiedFolderScreen(
                                                 else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
                                             }
                                         },
-                                        onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                        onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
                                     )
                                 }
                             }
                         } else {
-                            // Virtual aur Vault Folders ke liye purana method
                             items(uiState.items, key = { it.id }) { item ->
                                 UnifiedListItem(
                                     item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
@@ -299,7 +284,7 @@ fun UnifiedFolderScreen(
                                             else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
                                         }
                                     },
-                                    onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                    onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
                                 )
                             }
                         }
@@ -311,13 +296,11 @@ fun UnifiedFolderScreen(
     }
 }
 
-// 🌟 CLEAN TOP BAR
 @Composable
 fun UnifiedCustomTopBar(
     title: String,
     isGridView: Boolean,
     canCreateSubFolders: Boolean,
-    isEmpty: Boolean,
     onBackClick: () -> Unit,
     onAddFolderClick: () -> Unit,
     onSortClick: () -> Unit,
@@ -334,20 +317,17 @@ fun UnifiedCustomTopBar(
 
             if (canCreateSubFolders) IconButton(onClick = onAddFolderClick) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
 
-            // Hides these icons automatically if folder is empty!
-            AnimatedVisibility(visible = !isEmpty, enter = fadeIn(), exit = fadeOut()) {
-                Row {
-                    IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
-                    IconButton(onClick = onToggleView) { Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View") }
-                    IconButton(onClick = onSelectClick) { Icon(Icons.Outlined.CheckBox, "Select") }
-                }
+            // 🌟 FIX: AnimatedVisibility(!isEmpty) yahan se hata diya gaya hai.
+            // Ab folder empty hone par bhi List/Grid aur Sort ke icons humesha dikhenge!
+            Row {
+                IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
+                IconButton(onClick = onToggleView) { Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View") }
+                IconButton(onClick = onSelectClick) { Icon(Icons.Outlined.CheckBox, "Select") }
             }
         }
     }
 }
 
-// 🌟 PREMIUM EMPTY STATE WITH IMPORT BUTTON
-// 🌟 2026 PRO UX: Premium Empty State with 3 Action Cards
 @Composable
 fun PremiumEmptyState(
     canImport: Boolean,
@@ -357,122 +337,36 @@ fun PremiumEmptyState(
     onCreateFolderClick: () -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Options List
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (canImport) {
-                // Option 1: Add from this app
-                ProEmptyStateCard(
-                    title = "Add from this app",
-                    icon = Icons.Default.Home,
-                    iconTint = MaterialTheme.colorScheme.error,
-                    onClick = onImportFromAppClick
-                )
-
-                // Option 2: Add from device
-                ProEmptyStateCard(
-                    title = "Add from device",
-                    icon = Icons.Default.PhoneAndroid,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    onClick = onImportFromDeviceClick
-                )
+                ProEmptyStateCard(title = "Add from this app", icon = Icons.Default.Home, iconTint = MaterialTheme.colorScheme.error, onClick = onImportFromAppClick)
+                ProEmptyStateCard(title = "Add from device", icon = Icons.Default.PhoneAndroid, iconTint = MaterialTheme.colorScheme.primary, onClick = onImportFromDeviceClick)
             }
-
             if (canCreateFolder) {
-                // Option 3: Create folder
-                ProEmptyStateCard(
-                    title = "Create folder",
-                    icon = Icons.Default.Folder,
-                    iconTint = MaterialTheme.colorScheme.tertiary, // Premium Yellow
-                    onClick = onCreateFolderClick
-                )
+                ProEmptyStateCard(title = "Create folder", icon = Icons.Default.Folder, iconTint = MaterialTheme.colorScheme.tertiary, onClick = onCreateFolderClick)
             }
         }
     }
 }
 
 @Composable
-private fun ProEmptyStateCard(
-    title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconTint: Color,
-    onClick: () -> Unit
-) {
+private fun ProEmptyStateCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, iconTint: Color, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(24.dp)
-                )
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp))
             }
             Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun UnifiedBreadcrumbs(
-    breadcrumbs: List<Folder>,
-    onBreadcrumbClick: (Folder?) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "Home",
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.clickable { onBreadcrumbClick(null) }.padding(4.dp)
-        )
-        breadcrumbs.forEach { folder ->
-            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
-            val isLast = folder == breadcrumbs.last()
-            Text(
-                text = folder.name,
-                fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium,
-                color = if (isLast) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .padding(4.dp)
-                    .clickable(enabled = !isLast) { onBreadcrumbClick(folder) }
-            )
+            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+            Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

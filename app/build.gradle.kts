@@ -95,6 +95,10 @@ dependencies {
     implementation(libs.androidx.paging.compose)
     implementation(libs.room.paging)
     implementation(libs.androidx.windowsizeclass)
+    implementation(libs.androidx.compose.adaptive)
+    implementation(libs.androidx.compose.adaptive.layout)
+    implementation(libs.androidx.compose.adaptive.navigation)
+
 }
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")

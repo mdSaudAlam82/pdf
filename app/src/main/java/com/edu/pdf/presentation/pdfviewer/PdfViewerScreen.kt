@@ -193,14 +193,6 @@ fun PdfViewerScreen(
                             }
                         }
                     )
-
-                    // 🌟 2026 ARCHITECT FIX: RAM Cleanup Jab Viewer Band Ho
-                    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-                    DisposableEffect(lifecycleOwner) {
-                        onDispose {
-                            System.gc() // Halaki Android khud karta hai, par PDF rendering heavy hoti hai
-                        }
-                    }
                 } else {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("PDF load nahi ho pai", color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -1,6 +1,23 @@
 <resources>
-    <string name="app_name">PDF App</string>
+    <string name="app_name">PdfPro</string>
+
     <string name="tab_recent">Recent</string>
     <string name="tab_all_files">All Files</string>
     <string name="tab_favorites">Favorites</string>
+
+    <string name="action_delete">Delete</string>
+    <string name="action_remove">Remove</string>
+    <string name="action_move">Move</string>
+    <string name="action_unfav">Unfav</string>
+    <string name="action_merge">Merge</string>
+    <string name="action_share">Share</string>
+
+    <string name="msg_select_delete">Select items to delete</string>
+    <string name="msg_select_remove">Select items to remove</string>
+    <string name="msg_select_move">Select items to move</string>
+    <string name="msg_select_unfav">Select items to unfavorite</string>
+    <string name="msg_no_merge_folder">Folders cannot be merged</string>
+    <string name="msg_select_2_pdf">Select at least 2 PDFs to merge</string>
+    <string name="msg_no_share_folder">Folders cannot be shared directly</string>
+    <string name="msg_select_pdf_share">Select PDFs to share</string>
 </resources>

@@ -1,34 +1,23 @@
 package com.edu.pdf.presentation.home.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.home.HomeAction
@@ -61,16 +50,13 @@ fun HomeContent(
         // 🌟 YEHAN SE 'HomeTabs' HATA DIYE GAYE HAIN KYUNKI WO UPAR SCROLL BAR ME CHIPAK GAYE HAIN
 
         if (state.breadcrumbs.isNotEmpty()) {
-            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                item {
-                    Text("Home", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { while(state.breadcrumbs.isNotEmpty()) onAction(HomeAction.NavigateUp) }.padding(4.dp))
-                    Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(16.dp), tint = Color.Gray)
+            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                breadcrumbs = state.breadcrumbs,
+                onNavigate = {
+                    // Root jane ke liye sab pop kardo
+                    while(state.breadcrumbs.isNotEmpty()) onAction(HomeAction.NavigateUp)
                 }
-                items(state.breadcrumbs) { folder ->
-                    Text(folder.name, color = if (folder == state.breadcrumbs.last()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary, fontWeight = if (folder == state.breadcrumbs.last()) FontWeight.Bold else FontWeight.Medium, modifier = Modifier.padding(4.dp))
-                    if (folder != state.breadcrumbs.last()) Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(16.dp), tint = Color.Gray)
-                }
-            }
+            )
         }
 
         HorizontalPager(

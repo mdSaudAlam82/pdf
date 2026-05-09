@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.edu.pdf.domain.model.HomeItem
+import androidx.compose.ui.res.stringResource
+import com.edu.pdf.R // Isse aapka strings.xml link ho jayega
 
 @Composable
 fun ActionBottomBar(
@@ -53,36 +55,62 @@ fun ActionBottomBar(
         ) {
             // 1. DELETE
             ActionItem(
-                title = "Delete",
+                title = stringResource(R.string.action_delete),
                 icon = Icons.Default.Delete,
                 enabled = totalCount > 0,
-                disabledMessage = "Select items to delete",
+                disabledMessage = stringResource(R.string.msg_select_delete),
                 onClick = onDelete
             )
 
             // 2. DYNAMIC TAB ACTION
             when (tabIndex) {
-                0 -> ActionItem("Remove", Icons.Default.HistoryToggleOff, enabled = totalCount > 0, disabledMessage = "Select items to remove", onClick = onRemoveFromRecent)
-                1 -> ActionItem("Move", Icons.AutoMirrored.Filled.DriveFileMove, enabled = totalCount > 0, disabledMessage = "Select items to move", onClick = onMove)
-                2 -> ActionItem("Unfav", Icons.Default.BookmarkRemove, enabled = totalCount > 0, disabledMessage = "Select items to unfavorite", onClick = onUnfavorite)
+                0 -> ActionItem(
+                    title = stringResource(R.string.action_remove),
+                    icon = Icons.Default.HistoryToggleOff,
+                    enabled = totalCount > 0,
+                    disabledMessage = stringResource(R.string.msg_select_remove),
+                    onClick = onRemoveFromRecent
+                )
+                1 -> ActionItem(
+                    title = stringResource(R.string.action_move),
+                    icon = Icons.AutoMirrored.Filled.DriveFileMove,
+                    enabled = totalCount > 0,
+                    disabledMessage = stringResource(R.string.msg_select_move),
+                    onClick = onMove
+                )
+                2 -> ActionItem(
+                    title = stringResource(R.string.action_unfav),
+                    icon = Icons.Default.BookmarkRemove,
+                    enabled = totalCount > 0,
+                    disabledMessage = stringResource(R.string.msg_select_unfav),
+                    onClick = onUnfavorite
+                )
             }
 
-            // 3. MERGE (🌟 ALWAYS VISIBLE, but becomes colorless if folders are selected)
+            // 3. MERGE
             val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
-            val mergeMsg = if (hasFolderSelected) "Folders cannot be merged" else "Select at least 2 PDFs to merge"
+            val mergeMsg = if (hasFolderSelected)
+                stringResource(R.string.msg_no_merge_folder)
+            else
+                stringResource(R.string.msg_select_2_pdf)
+
             ActionItem(
-                title = "Merge",
+                title = stringResource(R.string.action_merge),
                 icon = Icons.AutoMirrored.Filled.CallMerge,
                 enabled = mergeEnabled,
                 disabledMessage = mergeMsg,
                 onClick = onMerge
             )
 
-            // 4. SHARE (🌟 ALWAYS VISIBLE, but becomes colorless if folders are selected)
+            // 4. SHARE
             val shareEnabled = totalCount > 0 && !hasFolderSelected
-            val shareMsg = if (hasFolderSelected) "Folders cannot be shared directly" else "Select PDFs to share"
+            val shareMsg = if (hasFolderSelected)
+                stringResource(R.string.msg_no_share_folder)
+            else
+                stringResource(R.string.msg_select_pdf_share)
+
             ActionItem(
-                title = "Share",
+                title = stringResource(R.string.action_share),
                 icon = Icons.Default.Share,
                 enabled = shareEnabled,
                 disabledMessage = shareMsg,

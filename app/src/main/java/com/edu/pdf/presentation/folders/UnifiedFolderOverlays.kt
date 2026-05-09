@@ -2,64 +2,29 @@ package com.edu.pdf.presentation.folders
 
 import android.content.Intent
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.folders.components.FolderMenuSheet
@@ -319,122 +284,12 @@ fun UnifiedFolderOverlays(
 
         // 🌟 2026 PREMIUM FULL-SCREEN PICKER UX
         is UnifiedFolderSheetState.AppPdfPicker -> {
-            var selectedIds by remember { mutableStateOf(setOf<String>()) }
-            var searchQuery by remember { mutableStateOf("") }
-            val haptic = LocalHapticFeedback.current
-
-            // On-the-fly Instant Search
-            val filteredPdfs = remember(searchQuery, sheetState.allPdfs) {
-                if (searchQuery.isBlank()) sheetState.allPdfs
-                else sheetState.allPdfs.filter { it.name.contains(searchQuery, ignoreCase = true) }
-            }
-
-            Dialog(
-                onDismissRequest = { onAction(UnifiedFolderAction.CloseSheet) },
-                properties = DialogProperties(
-                    usePlatformDefaultWidth = false, // Takes full screen
-                    decorFitsSystemWindows = false
-                )
-            ) {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = MaterialTheme.colorScheme.background,
-                    topBar = {
-                        Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    IconButton(onClick = { onAction(UnifiedFolderAction.CloseSheet) }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Close")
-                                    }
-                                    Text("Select PDFs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-
-                                    AnimatedVisibility(visible = selectedIds.isNotEmpty()) {
-                                        Button(
-                                            onClick = { onAction(UnifiedFolderAction.MovePdfsToCurrentFolder(selectedIds.toList())) },
-                                            modifier = Modifier.padding(end = 8.dp)
-                                        ) {
-                                            Text("Add (${selectedIds.size})", fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                                // Live Premium Search Bar
-                                OutlinedTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                    placeholder = { Text("Search files...") },
-                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(24.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                            }
-                        }
-                    }
-                ) { padding ->
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(padding)
-                    ) {
-                        if (filteredPdfs.isEmpty()) {
-                            item {
-                                Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                                    Text("No files found", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        } else {
-                            items(items = filteredPdfs, key = { it.id }) { pdf ->
-                                val isSelected = selectedIds.contains(pdf.id)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            selectedIds = if (isSelected) selectedIds - pdf.id else selectedIds + pdf.id
-                                        }
-                                        .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                                    }
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = pdf.name,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = android.text.format.Formatter.formatShortFileSize(context, pdf.sizeInBytes),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
-                                        contentDescription = null,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+            com.edu.pdf.presentation.common.picker.GlobalPdfPickerSheet(
+                onDismiss = { onAction(UnifiedFolderAction.CloseSheet) },
+                onPdfsSelected = { selectedIds ->
+                    onAction(UnifiedFolderAction.MovePdfsToCurrentFolder(selectedIds))
                 }
-            }
+            )
         }
     }
 }

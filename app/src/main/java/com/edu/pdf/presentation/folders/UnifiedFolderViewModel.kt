@@ -3,6 +3,7 @@ package com.edu.pdf.presentation.folders
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavType
 import androidx.navigation.toRoute
 import androidx.paging.cachedIn
 import androidx.paging.map
@@ -18,8 +19,11 @@ import com.edu.pdf.domain.usecase.RenamePdfUseCase
 import com.edu.pdf.presentation.navigation.Screen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -27,16 +31,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import kotlin.reflect.typeOf
 
 sealed interface UnifiedFolderSheetState {
     data object None : UnifiedFolderSheetState
@@ -47,7 +54,7 @@ sealed interface UnifiedFolderSheetState {
     data class DetailsDialog(val item: HomeItem) : UnifiedFolderSheetState
     data class DeleteConfirm(val items: List<HomeItem>) : UnifiedFolderSheetState
     data class MovePicker(val items: List<HomeItem>) : UnifiedFolderSheetState
-    data class AppPdfPicker(val allPdfs: List<com.edu.pdf.domain.model.PdfFile>) : UnifiedFolderSheetState
+    data object AppPdfPicker : UnifiedFolderSheetState
 }
 
 sealed interface UnifiedFolderEvent {
@@ -56,6 +63,11 @@ sealed interface UnifiedFolderEvent {
 }
 
 sealed interface UnifiedFolderAction {
+    // 🌟 SELECTION ACTIONS INCLUDED
+    data class ToggleSelection(val id: String) : UnifiedFolderAction
+    data class SetSelectionMode(val enabled: Boolean) : UnifiedFolderAction
+    data class SelectAll(val ids: List<String>) : UnifiedFolderAction
+
     data class OpenSheet(val state: UnifiedFolderSheetState) : UnifiedFolderAction
     data object CloseSheet : UnifiedFolderAction
     data class OnTextInputChange(val text: String) : UnifiedFolderAction
@@ -80,6 +92,11 @@ data class UnifiedFolderUiState(
     val folderName: String = "",
     val items: ImmutableList<HomeItem> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
+
+    // 🌟 SELECTION STATE (MVI CLEAN ARCHITECTURE)
+    val isSelectionMode: Boolean = false,
+    val selectedIds: PersistentSet<String> = persistentSetOf(),
+
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: UnifiedFolderSheetState = UnifiedFolderSheetState.None,
@@ -100,19 +117,30 @@ class UnifiedFolderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val args = savedStateHandle.toRoute<Screen.UnifiedFolder>()
+    // UnifiedFolderViewModel.kt me in lines ko aise update karo:
+    private val args = savedStateHandle.toRoute<Screen.UnifiedFolder>(
+        mapOf(typeOf<FolderType>() to NavType.EnumType(FolderType::class.java))
+    )
+
     private val currentFolderId = args.folderId
     private val currentFolderType = args.folderType
-
     private val actualFolderId = when {
-        currentFolderId.isBlank() || currentFolderId == "root" || currentFolderId == "vault_root" -> null
+        currentFolderId.isBlank() || currentFolderId == "root" -> null
         else -> currentFolderId
     }
+// ... rest of the logic ...
 
     private val _events = Channel<UnifiedFolderEvent>()
-
+    val events = _events.receiveAsFlow()
     private val _sortType = MutableStateFlow(SortType.DATE_DESC)
-    private val _internalState = MutableStateFlow(UnifiedFolderUiState(folderId = currentFolderId, folderName = args.folderName, folderType = currentFolderType))
+
+    private val _internalState = MutableStateFlow(
+        UnifiedFolderUiState(
+            folderId = currentFolderId,
+            folderName = android.net.Uri.decode(args.folderName), // 🌟 Ise bhi decode kar diya
+            folderType = currentFolderType
+        )
+    )
 
     val pagedPhysicalItems = repository.getPaginatedPdfsInPhysicalFolder(actualFolderId ?: "")
         .map { pagingData ->
@@ -120,7 +148,7 @@ class UnifiedFolderViewModel @Inject constructor(
                 HomeItem.PdfItem(pdfFile) as HomeItem
             }
         }
-        .cachedIn(viewModelScope) // 🌟 Ye RAM ko optimize karta hai
+        .cachedIn(viewModelScope)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val physicalItemsFlow = _sortType.flatMapLatest { sort ->
@@ -139,12 +167,38 @@ class UnifiedFolderViewModel @Inject constructor(
 
     private val virtualItemsFlow = combine(
         repository.getManagedFolders(actualFolderId, currentFolderType == FolderType.SECURE_VAULT),
-        repository.getManagedPdfs(actualFolderId, currentFolderType == FolderType.SECURE_VAULT)
-    ) { folders, pdfs ->
-        val folderItems = folders.map { HomeItem.FolderItem(it) }
-        val pdfItems = pdfs.map { HomeItem.PdfItem(it) }
-        (folderItems + pdfItems).toImmutableList()
-    }
+        repository.getManagedPdfs(actualFolderId, currentFolderType == FolderType.SECURE_VAULT),
+        _sortType
+    ) { folders, pdfs, sort ->
+
+        val folderComparator = Comparator<Folder> { f1, f2 ->
+            when (sort) {
+                SortType.NAME_ASC -> f1.name.compareTo(f2.name, ignoreCase = true)
+                SortType.NAME_DESC -> f2.name.compareTo(f1.name, ignoreCase = true)
+                SortType.DATE_ASC -> f1.createdAt.compareTo(f2.createdAt)
+                SortType.DATE_DESC -> f2.createdAt.compareTo(f1.createdAt)
+                SortType.SIZE_ASC -> f1.pdfCount.compareTo(f2.pdfCount)
+                SortType.SIZE_DESC -> f2.pdfCount.compareTo(f1.pdfCount)
+            }
+        }
+
+        val pdfComparator = Comparator<com.edu.pdf.domain.model.PdfFile> { p1, p2 ->
+            when (sort) {
+                SortType.NAME_ASC -> p1.name.compareTo(p2.name, ignoreCase = true)
+                SortType.NAME_DESC -> p2.name.compareTo(p1.name, ignoreCase = true)
+                SortType.DATE_ASC -> p1.lastModified.compareTo(p2.lastModified)
+                SortType.DATE_DESC -> p2.lastModified.compareTo(p1.lastModified)
+                SortType.SIZE_ASC -> p1.sizeInBytes.compareTo(p2.sizeInBytes)
+                SortType.SIZE_DESC -> p2.sizeInBytes.compareTo(p1.sizeInBytes)
+            }
+        }
+
+        val sortedFolders = folders.sortedWith(folderComparator).map { HomeItem.FolderItem(it) }
+        val sortedPdfs = pdfs.sortedWith(pdfComparator).map { HomeItem.PdfItem(it) }
+
+        (sortedFolders + sortedPdfs).toImmutableList()
+
+    }.flowOn(Dispatchers.Default)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val itemsFlow = if (currentFolderType == FolderType.PHYSICAL_DEVICE) physicalItemsFlow else virtualItemsFlow
@@ -178,10 +232,32 @@ class UnifiedFolderViewModel @Inject constructor(
             canImport = !isPhysical,
             canRenameOrDelete = !isPhysical
         )
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
+    }
+        .distinctUntilChanged() // 🌟 ELITE FIX: UI tabhi recompose hoga jab actual data badlega!
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
 
     fun onAction(action: UnifiedFolderAction) {
         when (action) {
+            // 🌟 SELECTION LOGIC
+            is UnifiedFolderAction.ToggleSelection -> {
+                val currentSelected = _internalState.value.selectedIds
+                val newSelection = if (currentSelected.contains(action.id)) currentSelected.remove(action.id) else currentSelected.add(action.id)
+                _internalState.update { it.copy(selectedIds = newSelection) }
+            }
+            is UnifiedFolderAction.SetSelectionMode -> {
+                _internalState.update {
+                    it.copy(
+                        isSelectionMode = action.enabled,
+                        selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds
+                    )
+                }
+            }
+            is UnifiedFolderAction.SelectAll -> {
+                _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
+            }
+
+            // BAAKI ACTIONS
             is UnifiedFolderAction.OpenSheet -> {
                 val initialText = if (action.state is UnifiedFolderSheetState.RenameDialog) action.state.currentName else ""
                 _internalState.update { it.copy(activeSheetState = action.state, textInput = initialText) }
@@ -281,12 +357,7 @@ class UnifiedFolderViewModel @Inject constructor(
             }
 
             is UnifiedFolderAction.OpenAppPdfPicker -> {
-                viewModelScope.launch {
-                    val allPdfs = repository.getAllPdfs(SortType.DATE_DESC).first()
-                    withContext(Dispatchers.Main) {
-                        _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.AppPdfPicker(allPdfs)) }
-                    }
-                }
+                _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.AppPdfPicker) }
             }
 
             is UnifiedFolderAction.MovePdfsToCurrentFolder -> {

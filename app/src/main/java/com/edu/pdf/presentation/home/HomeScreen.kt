@@ -52,8 +52,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavHostController
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBar
@@ -64,8 +66,6 @@ import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
-import com.edu.pdf.presentation.home.selection.SelectionViewModel
-import com.edu.pdf.presentation.navigation.Screen
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.coroutines.launch
 
@@ -73,43 +73,44 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreenWrapper(
     viewModel: HomeViewModel,
-    selectionViewModel: SelectionViewModel = hiltViewModel(),
     navController: NavHostController,
     onPdfClick: (String) -> Unit,
-    onSearchClick: () -> Unit
+    onSearchClick: () -> Unit,
+    onFolderClick: (String, String, com.edu.pdf.domain.model.FolderType) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(Environment.isExternalStorageManager()) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-    val isSelectionMode by selectionViewModel.isSelectionMode.collectAsStateWithLifecycle()
-    val selectedPdfs by selectionViewModel.selectedPdfs.collectAsStateWithLifecycle()
+
+    // 🌟 NAYA: Ab ye data viewModel ki uiState se aa raha hai
+    val isSelectionMode = uiState.isSelectionMode
+    val selectedPdfs = uiState.selectedIds
+
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         hasPermission = Environment.isExternalStorageManager()
         if (hasPermission) viewModel.onAction(HomeAction.RefreshData)
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.events.collect { event ->
-            when (event) {
-                // 🌟 FIX 1 & 2: Added NavigateToPdf back, which fixes the "onPdfClick never used" warning
-                is HomeEvent.NavigateToPdf -> onPdfClick(event.path)
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-                is HomeEvent.NavigateToFolder -> {
-                    // 🌟 VIRTUAL HUB context ke saath navigate karein
-                    navController.navigate(
-                        Screen.UnifiedFolder(
-                            folderId = event.folderId,
-                            folderName = event.folderName,
-                            folderType = com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB
+    LaunchedEffect(viewModel.events, lifecycleOwner) {
+        // Ye block tabhi chalega jab screen user ko dikh rahi hogi (STARTED state)
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is HomeEvent.NavigateToPdf -> onPdfClick(event.path)
+                    is HomeEvent.NavigateToFolder -> {
+                        onFolderClick(
+                            event.folderId,
+                            event.folderName,
+                            com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB
                         )
-                    )
+                    }
+                    is HomeEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    is HomeEvent.ClearMultiSelection -> viewModel.onAction(HomeAction.SetSelectionMode(false))
                 }
-
-                // 🌟 FIX 3: Added missing branches to make 'when' exhaustive
-                is HomeEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
-
-                is HomeEvent.ClearMultiSelection -> selectionViewModel.setSelectionMode(false)
             }
         }
     }
@@ -130,15 +131,17 @@ fun HomeScreenWrapper(
                 selectedPdfs = selectedPdfs,
                 navController = navController,
                 onSearchClick = onSearchClick,
-                onSelectionModeChange = selectionViewModel::setSelectionMode,
-                onToggleSelection = selectionViewModel::toggleSelection,
-                onSelectAll = selectionViewModel::selectAll,
+                // 🌟 NAYA: Ab hum HomeAction use kar rahe hain
+                onSelectionModeChange = { enabled -> viewModel.onAction(HomeAction.SetSelectionMode(enabled)) },
+                onToggleSelection = { id -> viewModel.onAction(HomeAction.ToggleSelection(id)) },
+                onSelectAll = { ids -> viewModel.onAction(HomeAction.SelectAll(ids)) },
                 onAction = viewModel::onAction
             )
             HomeOverlays(state = uiState, foldersTree = viewModel.foldersTree.collectAsStateWithLifecycle().value, onAction = viewModel::onAction)
         }
     }
 }
+
 @OptIn(
     androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi::class,
     androidx.compose.material3.ExperimentalMaterial3Api::class

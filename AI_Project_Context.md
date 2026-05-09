@@ -73,9 +73,14 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |           
 |               +---presentation
 |               |   +---common
-|               |   |       PremiumBottomBar.kt
-|               |   |       UniversalTopBar.kt
-|               |   |       
+|               |   |   |   PremiumBottomBar.kt
+|               |   |   |   PremiumBreadcrumbs.kt
+|               |   |   |   UniversalTopBar.kt
+|               |   |   |   
+|               |   |   \---picker
+|               |   |           GlobalPdfPickerSheet.kt
+|               |   |           PdfPickerViewModel.kt
+|               |   |           
 |               |   +---core
 |               |   |       MainAppScreen.kt
 |               |   |       PremiumPermissionScreen.kt
@@ -99,23 +104,20 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |   |   |   HomeScreen.kt
 |               |   |   |   HomeViewModel.kt
 |               |   |   |   
-|               |   |   +---components
-|               |   |   |       ActionBottomBar.kt
-|               |   |   |       EmptyStateView.kt
-|               |   |   |       HomeContent.kt
-|               |   |   |       HomeFolderGridItem.kt
-|               |   |   |       HomeFolderListItem.kt
-|               |   |   |       HomeTabs.kt
-|               |   |   |       MoveFolderListItem.kt
-|               |   |   |       PdfActionBottomSheet.kt
-|               |   |   |       PdfGridItem.kt
-|               |   |   |       PdfListItem.kt
-|               |   |   |       PdfThumbnail.kt
-|               |   |   |       SelectionTopBar.kt
-|               |   |   |       SortBottomSheet.kt
-|               |   |   |       
-|               |   |   \---selection
-|               |   |           SelectionViewModel.kt
+|               |   |   \---components
+|               |   |           ActionBottomBar.kt
+|               |   |           EmptyStateView.kt
+|               |   |           HomeContent.kt
+|               |   |           HomeFolderGridItem.kt
+|               |   |           HomeFolderListItem.kt
+|               |   |           HomeTabs.kt
+|               |   |           MoveFolderListItem.kt
+|               |   |           PdfActionBottomSheet.kt
+|               |   |           PdfGridItem.kt
+|               |   |           PdfListItem.kt
+|               |   |           PdfThumbnail.kt
+|               |   |           SelectionTopBar.kt
+|               |   |           SortBottomSheet.kt
 |               |   |           
 |               |   +---navigation
 |               |   |       Screen.kt
@@ -191,7 +193,7 @@ FILE: C:\Users\saud\project\pdf\app\src\main\AndroidManifest.xml
         android:name=".PdfApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true" android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
@@ -587,6 +589,7 @@ interface PdfDao {
         JOIN pdf_fts_table ON pdf_table.roomId = pdf_fts_table.rowid 
         WHERE pdf_fts_table MATCH :query || '*' AND pdf_table.isVault = 0
         ORDER BY pdf_table.lastModified DESC
+        LIMIT 50 -- 🌟 THE ELITE FIX: UI freeze hone se bachayega
     """)
     fun searchPdfsInDatabase(query: String): Flow<List<PdfEntity>>
 
@@ -606,7 +609,12 @@ interface PdfDao {
     @Query("DELETE FROM pdf_table WHERE path IN (:paths)")
     suspend fun deletePdfsByPaths(paths: List<String>)
 
-    @Query("SELECT * FROM pdf_table WHERE name LIKE '%' || :query || '%' AND isVault = :isVault ORDER BY lastModified DESC")
+    @Query("""
+        SELECT * FROM pdf_table 
+        WHERE name LIKE '%' || :query || '%' AND isVault = :isVault 
+        ORDER BY lastModified DESC 
+        LIMIT 50 -- 🌟 THE ELITE FIX: RAM bachaane ke liye
+    """)
     suspend fun searchPdfsFast(query: String, isVault: Boolean): List<PdfEntity>
 
     // 🌟 THE VAULT FIX: Naya ID aur Path update karne ke liye
@@ -1006,24 +1014,43 @@ class PdfRepositoryImpl @Inject constructor(
         return pdfDao.searchPdfsInDatabase(query).map { list -> list.map { it.toDomainModel() } }
     }
 
-    override suspend fun scanAndSavePdfs(): Unit = withContext(Dispatchers.IO) {
-        val isInitialCompleted = userPreferences.isInitialScanCompleted()
-        val lastSyncTime = if (!isInitialCompleted) 0L else userPreferences.getLastSyncTime()
-        val currentTime = System.currentTimeMillis()
+    override suspend fun scanAndSavePdfs() {
+        withContext(Dispatchers.IO) {
+            val isInitialCompleted = userPreferences.isInitialScanCompleted()
+            val lastSyncTime = if (!isInitialCompleted) 0L else userPreferences.getLastSyncTime()
+            val currentTime = System.currentTimeMillis()
 
-        deviceStorage.processDevicePdfUpdates(
-            lastSyncTime = lastSyncTime,
-            onNewPdfsBatch = { chunk ->
-                pdfDao.insertAllPdfs(chunk.map { it.toEntity().copy(virtualParentId = null, isVault = false) })
-                yield()
+            // 1. Add newly discovered files to the database
+            deviceStorage.processDevicePdfUpdates(
+                lastSyncTime = lastSyncTime,
+                onNewPdfsBatch = { chunk ->
+                    pdfDao.insertAllPdfs(chunk.map { it.toEntity().copy(virtualParentId = null, isVault = false) })
+                    yield()
+                }
+            )
+
+            // ==========================================
+            // 🌟 2026 PRO FIX: "GHOST FILE" CLEANUP
+            // ==========================================
+            // Fetch all public paths from the database to verify their existence
+            val allPublicPaths = pdfDao.getAllPublicPdfPaths()
+
+            // Filter out paths that no longer exist on the physical device
+            val stalePaths = allPublicPaths.filter { path -> !File(path).exists() }
+
+            // Gracefully remove stale paths from the database to keep the UI clean
+            if (stalePaths.isNotEmpty()) {
+                stalePaths.chunked(100).forEach { chunk ->
+                    pdfDao.deletePdfsByPaths(chunk)
+                    yield()
+                }
             }
-        )
 
-        if (!isInitialCompleted) {
-            userPreferences.setInitialScanCompleted(true)
+            if (!isInitialCompleted) {
+                userPreferences.setInitialScanCompleted(true)
+            }
+            userPreferences.updateLastSyncTime(currentTime)
         }
-        userPreferences.updateLastSyncTime(currentTime)
-        Unit
     }
 
     override suspend fun checkFileExists(fileId: String): Boolean = deviceStorage.doesFileExist(fileId)
@@ -2091,6 +2118,126 @@ fun PremiumNavigationRail(navController: NavHostController) {
     }
 }
 ``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumBreadcrumbs.kt
+``kotlin
+package com.edu.pdf.presentation.common
+
+import android.annotation.SuppressLint
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.edu.pdf.domain.model.Folder
+
+@Composable
+fun PremiumBreadcrumbs(
+    breadcrumbs: List<Folder>,
+    rootName: String = "Home",
+    onNavigate: (Folder?) -> Unit,
+    @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
+) {
+    val haptic = LocalHapticFeedback.current
+
+    LazyRow(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp), // 🌟 Premium Spacing
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 🌟 1. Root Node (e.g., Home)
+        item {
+            BreadcrumbPill(
+                name = rootName,
+                isLast = breadcrumbs.isEmpty(),
+                onClick = {
+                    if (breadcrumbs.isNotEmpty()) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onNavigate(null)
+                    }
+                }
+            )
+        }
+
+        // 🌟 2. Sub-folders (Dynamic Path)
+        items(breadcrumbs) { folder ->
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.padding(horizontal = 4.dp).size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+
+            val isLast = folder == breadcrumbs.last()
+            BreadcrumbPill(
+                name = folder.name,
+                isLast = isLast,
+                onClick = {
+                    if (!isLast) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onNavigate(folder)
+                    }
+                }
+            )
+        }
+    }
+}
+
+// 🌟 THE ELITE FIX: The Pill Design (No hardcoded colors!)
+@Composable
+private fun BreadcrumbPill(name: String, isLast: Boolean, onClick: () -> Unit) {
+    // 🌟 THE DYNAMIC SHADOW LOGIC
+    // Active (Last): Red background (primary)
+    // Previous: Light/Dark background (surfaceVariant)
+    val bgColor = if (isLast) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) // 🌟 Light me white-shadow, Dark me dark-shadow
+    }
+
+    val textColor = if (isLast) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium
+
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(bgColor)
+            .clickable(enabled = !isLast, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = name,
+            color = textColor,
+            fontWeight = fontWeight,
+            fontSize = 16.sp
+        )
+    }
+}
+``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\UniversalTopBar.kt
 ``kotlin
 package com.edu.pdf.presentation.common
@@ -2139,6 +2286,366 @@ fun UniversalTopBar(
     )
 }
 ``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\GlobalPdfPickerSheet.kt
+``kotlin
+package com.edu.pdf.presentation.common.picker
+
+import android.text.format.DateUtils
+import android.text.format.Formatter
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.edu.pdf.domain.model.Folder
+import com.edu.pdf.domain.model.HomeItem
+import com.edu.pdf.presentation.home.components.PdfThumbnail
+import com.edu.pdf.presentation.search.components.HighlightedText
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlobalPdfPickerSheet(
+    onDismiss: () -> Unit,
+    onPdfsSelected: (List<String>) -> Unit,
+    viewModel: PdfPickerViewModel = hiltViewModel()
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val haptic = LocalHapticFeedback.current
+
+
+    Dialog(
+        onDismissRequest = {
+            // 🌟 PRO FIX: Dialog ka apna Back System override kar diya!
+            if (state.currentFolderId != null) {
+                // Folder ke andar hain, toh ek step piche jao
+                val parentFolder = if (state.breadcrumbs.size > 1) {
+                    state.breadcrumbs[state.breadcrumbs.size - 2]
+                } else {
+                    null
+                }
+                viewModel.onAction(PdfPickerAction.NavigateToFolder(parentFolder))
+            } else {
+                // Root par hain, toh picker band karo
+                viewModel.onAction(PdfPickerAction.ClearSelection)
+                onDismiss()
+            }
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
+                Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
+                    Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = {
+                                viewModel.onAction(PdfPickerAction.ClearSelection)
+                                onDismiss()
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Close")
+                            }
+                            Text("Select PDFs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+
+                            AnimatedVisibility(visible = state.selectedIds.isNotEmpty()) {
+                                Button(
+                                    onClick = {
+                                        onPdfsSelected(state.selectedIds.toList())
+                                        viewModel.onAction(PdfPickerAction.ClearSelection)
+                                    },
+                                    modifier = Modifier.padding(end = 8.dp)
+                                ) {
+                                    Text("Add (${state.selectedIds.size})", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        // 🌟 Premium Search Bar
+                        OutlinedTextField(
+                            value = state.searchQuery,
+                            onValueChange = { viewModel.onAction(PdfPickerAction.OnSearchQueryChange(it)) },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                            placeholder = { Text("Search files...") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(24.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                focusedBorderColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+
+                        if (state.searchQuery.isBlank() && state.breadcrumbs.isNotEmpty()) {
+                            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                                breadcrumbs = state.breadcrumbs,
+                                rootName = "Root",
+                                onNavigate = { folder -> viewModel.onAction(PdfPickerAction.NavigateToFolder(folder)) }
+                            )
+                        }
+                    }
+                }
+            }
+        ) { padding ->
+            if (state.isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            } else if (state.items.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(if (state.searchQuery.isBlank()) "Folder is empty" else "No matching PDFs", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+                    items(items = state.items, key = { it.id }) { item ->
+                        when (item) {
+                            is HomeItem.FolderItem -> {
+                                PickerFolderRow(
+                                    folder = item.folder,
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.onAction(PdfPickerAction.NavigateToFolder(item.folder))
+                                    }
+                                )
+                            }
+                            is HomeItem.PdfItem -> {
+                                val isSelected = state.selectedIds.contains(item.pdf.id)
+                                PickerPdfRow(
+                                    pdf = item.pdf,
+                                    searchQuery = state.searchQuery,
+                                    isSelected = isSelected,
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.onAction(PdfPickerAction.ToggleSelection(item.pdf.id))
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 🌟 ZERO BLOAT UI COMPONENTS
+
+@Composable
+private fun PickerFolderRow(folder: Folder, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.width(48.dp).height(60.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Folder, contentDescription = "Folder", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(36.dp))
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(folder.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+            Text("${folder.pdfCount} items", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+    }
+}
+
+@Composable
+private fun PickerPdfRow(pdf: com.edu.pdf.domain.model.PdfFile, searchQuery: String, isSelected: Boolean, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val displaySize = remember(pdf.sizeInBytes) { Formatter.formatShortFileSize(context, pdf.sizeInBytes) }
+    val displayDate = remember(pdf.lastModified) {
+        DateUtils.getRelativeTimeSpanString(if (pdf.lastModified < 1000000000000L) pdf.lastModified * 1000 else pdf.lastModified, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.width(48.dp).height(60.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+        ) {
+            PdfThumbnail(pdf = pdf, modifier = Modifier.fillMaxSize())
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            HighlightedText(
+                text = pdf.name,
+                query = searchQuery, // 🌟 HIGHLIGHT MAGIC ENABLED!
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("$displayDate  •  $displaySize", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(
+            imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
+            contentDescription = null,
+            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\PdfPickerViewModel.kt
+``kotlin
+package com.edu.pdf.presentation.common.picker
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.edu.pdf.domain.model.Folder
+import com.edu.pdf.domain.model.HomeItem
+import com.edu.pdf.domain.repository.PdfRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.collections.immutable.PersistentSet
+import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.*
+import javax.inject.Inject
+
+// 🌟 1. STRICT MVI STATE
+data class PdfPickerState(
+    val currentFolderId: String? = null,
+    val breadcrumbs: List<Folder> = emptyList(),
+    val items: List<HomeItem> = emptyList(),
+    val selectedIds: PersistentSet<String> = persistentSetOf(),
+    val searchQuery: String = "",
+    val isLoading: Boolean = true
+)
+
+// 🌟 2. STRICT MVI ACTIONS
+sealed interface PdfPickerAction {
+    data class NavigateToFolder(val folder: Folder?) : PdfPickerAction
+    data class OnSearchQueryChange(val query: String) : PdfPickerAction
+    data class ToggleSelection(val pdfId: String) : PdfPickerAction
+    data object ClearSelection : PdfPickerAction
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@HiltViewModel
+class PdfPickerViewModel @Inject constructor(
+    private val repository: PdfRepository
+) : ViewModel() {
+
+    private val _currentFolderId = MutableStateFlow<String?>(null)
+    private val _searchQuery = MutableStateFlow("")
+    private val _selectedIds = MutableStateFlow<PersistentSet<String>>(persistentSetOf())
+
+    // 🌟 ZERO BLOAT: Breadcrumbs generator
+    private val breadcrumbsFlow = _currentFolderId.flatMapLatest { folderId ->
+        repository.getAllManagedFolders(isVault = false).map { allFolders ->
+            val list = mutableListOf<Folder>()
+            var curr = allFolders.find { it.folderId == folderId }
+            while (curr != null) {
+                list.add(0, curr)
+                curr = allFolders.find { it.folderId == curr.parentFolderId }
+            }
+            list
+        }
+    }
+
+    // 🌟 SMART ENGINE: Search OR Folder Navigation
+    private val itemsFlow = combine(_currentFolderId, _searchQuery) { folderId, query -> Pair(folderId, query) }
+        .flatMapLatest { (folderId, query) ->
+            if (query.isNotBlank()) {
+                // Search Mode: Sirf PDFs dikhao
+                repository.searchPdfs(query).map { pdfs -> pdfs.map { HomeItem.PdfItem(it) } }
+            } else {
+                // Navigation Mode: Folders + PDFs dono dikhao
+                combine(
+                    repository.getManagedFolders(folderId, isVault = false),
+                    repository.getManagedPdfs(folderId, isVault = false)
+                ) { folders, pdfs ->
+                    val fItems = folders.map { HomeItem.FolderItem(it) }.sortedBy { it.folder.name.lowercase() }
+                    val pItems = pdfs.map { HomeItem.PdfItem(it) }.sortedByDescending { it.pdf.lastModified }
+                    fItems + pItems
+                }
+            }
+        }.flowOn(Dispatchers.IO)
+
+    // 🌟 COMBINED UI STATE
+    val state: StateFlow<PdfPickerState> = combine(
+        _currentFolderId, breadcrumbsFlow, itemsFlow, _selectedIds, _searchQuery
+    ) { folderId, breadcrumbs, items, selectedIds, query ->
+        PdfPickerState(
+            currentFolderId = folderId,
+            breadcrumbs = breadcrumbs,
+            items = items,
+            selectedIds = selectedIds,
+            searchQuery = query,
+            isLoading = false
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PdfPickerState())
+
+    fun onAction(action: PdfPickerAction) {
+        when (action) {
+            is PdfPickerAction.NavigateToFolder -> {
+                _currentFolderId.value = action.folder?.folderId
+                _searchQuery.value = "" // Folder me jane par search clear kar do
+            }
+            is PdfPickerAction.OnSearchQueryChange -> _searchQuery.value = action.query
+            is PdfPickerAction.ToggleSelection -> {
+                val current = _selectedIds.value
+                _selectedIds.value = if (current.contains(action.pdfId)) current.remove(action.pdfId) else current.add(action.pdfId)
+            }
+            is PdfPickerAction.ClearSelection -> _selectedIds.value = persistentSetOf()
+        }
+    }
+}
+``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\core\MainAppScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.core
@@ -2156,8 +2663,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
+import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -2176,10 +2688,12 @@ import com.edu.pdf.presentation.folders.UnifiedFolderScreen
 import com.edu.pdf.presentation.folders.vault.VaultScreen
 import com.edu.pdf.presentation.home.HomeScreenWrapper
 import com.edu.pdf.presentation.home.HomeViewModel
-import com.edu.pdf.presentation.home.selection.SelectionViewModel
 import com.edu.pdf.presentation.navigation.Screen
 import com.edu.pdf.presentation.pdfviewer.PdfViewerScreen
 import com.edu.pdf.presentation.search.SearchScreen
+import kotlinx.coroutines.launch
+import androidx.navigation.NavType
+import kotlin.reflect.typeOf
 
 // 🌟 GATEWAY HELPER: PURE Android 13+ (MinSdk 33) Logic
 fun hasStoragePermission(): Boolean {
@@ -2223,19 +2737,76 @@ fun MainAppScreen() {
     }
 }
 
+@OptIn(ExperimentalMaterial3AdaptiveApi::class)
 fun NavGraphBuilder.homeSection(navController: NavHostController) {
     composable<Screen.Home> {
-        // 🌟 LAZY INJECTION: ViewModel tabhi banega jab permission mil jayegi aur Home khulega!
-        // Isse app crash ya hang bilkul nahi hoga.
-        val homeViewModel: HomeViewModel = hiltViewModel()
-        val selectionViewModel: SelectionViewModel = hiltViewModel()
+        val navigator = rememberListDetailPaneScaffoldNavigator<Any>()
+        val scope = rememberCoroutineScope()
 
-        HomeScreenWrapper(
-            viewModel = homeViewModel,
-            selectionViewModel = selectionViewModel,
-            navController = navController,
-            onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
-            onSearchClick = { navController.navigate(Screen.Search) }
+        NavigableListDetailPaneScaffold(
+            navigator = navigator,
+            listPane = {
+                val homeViewModel: HomeViewModel = hiltViewModel()
+                HomeScreenWrapper(
+                    viewModel = homeViewModel,
+                    navController = navController,
+                    onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
+                    onSearchClick = { navController.navigate(Screen.Search) },
+
+                    onFolderClick = { folderId, folderName, folderType ->
+                        // 🌟 THE ELITE FIX 1: No manual Uri.encode! Type-Safe navigation handles it.
+                        // 🌟 THE ELITE FIX 2: Direct navController use kiya taaki SavedStateHandle me
+                        //    sahi data jaye aur Blank Screen (white page) ka issue permanently solve ho jaye!
+                        navController.navigate(Screen.UnifiedFolder(folderId, folderName, folderType))
+                    }
+                )
+            },
+            detailPane = {
+                val folderArgs = navigator.currentDestination?.contentKey as? Screen.UnifiedFolder
+
+                if (folderArgs != null) {
+                    androidx.compose.runtime.key(folderArgs.folderId) {
+                        UnifiedFolderScreen(
+                            onBack = {
+                                scope.launch { if (navigator.canNavigateBack()) navigator.navigateBack() }
+                            },
+                            onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
+                            onFolderNavigate = { id, name, type ->
+                                scope.launch {
+                                    navigator.navigateTo(
+                                        ListDetailPaneScaffoldRole.Detail,
+                                        contentKey = Screen.UnifiedFolder(
+                                            android.net.Uri.encode(id),
+                                            android.net.Uri.encode(name),
+                                            type
+                                        )
+                                    )
+                                }
+                            },
+                            onBreadcrumbNavigate = { folder ->
+                                scope.launch {
+                                    if (folder == null) {
+                                        if (navigator.canNavigateBack()) navigator.navigateBack()
+                                    } else {
+                                        navigator.navigateTo(
+                                            ListDetailPaneScaffoldRole.Detail,
+                                            contentKey = Screen.UnifiedFolder(
+                                                android.net.Uri.encode(folder.folderId),
+                                                android.net.Uri.encode(folder.name),
+                                                FolderType.VIRTUAL_HUB
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Select a folder to view contents", color = Color.Gray)
+                    }
+                }
+            }
         )
     }
 }
@@ -2248,23 +2819,20 @@ fun NavGraphBuilder.pdfViewerSection(navController: NavHostController) {
     composable<Screen.PdfViewer> { backStackEntry -> backStackEntry.toRoute<Screen.PdfViewer>(); PdfViewerScreen(onBack = { navController.popBackStack() }) }
 }
 
-// ... MainAppScreen.kt ke andar foldersSection block dhundhein aur isse replace karein ...
-
 fun NavGraphBuilder.foldersSection(navController: NavHostController) {
     composable<Screen.Folders> {
         Scaffold(
             bottomBar = { PremiumBottomBar(navController) },
-            containerColor = MaterialTheme.colorScheme.background // 🌟 Background color match kiya
+            containerColor = MaterialTheme.colorScheme.background
         ) { padding ->
-            // 🌟 GOD MODE FIX: Double Padding (Mota Top Bar) hatane ke liye
-            // Hum sirf `bottom = padding.calculateBottomPadding()` use kar rahe hain.
             Box(modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
                 FoldersScreen(
                     onFolderClick = { path, name ->
                         if (path == "vault_root") {
                             navController.navigate(Screen.Vault)
                         } else {
-                            navController.navigate(Screen.UnifiedFolder(path, name, FolderType.PHYSICAL_DEVICE))
+                            // 🌟 FOLDER OPEN HOTE WAQT SLASHES KO ENCODE KIYA HAI
+                            navController.navigate(Screen.UnifiedFolder(android.net.Uri.encode(path), android.net.Uri.encode(name), FolderType.PHYSICAL_DEVICE))
                         }
                     }
                 )
@@ -2272,9 +2840,6 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController) {
         }
     }
 
-    // 🌟 (Iske neeche tumhara Screen.Vault aur Screen.UnifiedFolder wala code waisa ka waisa hi rahega)
-
-    // 🌟 NAYA: Dedicated Vault Navigation Block
     composable<Screen.Vault>(
         enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(350)) },
         exitTransition = { fadeOut(animationSpec = tween(200)) },
@@ -2287,18 +2852,26 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController) {
         )
     }
 
+    // 🌟 YAHAN SE TYPE-MAP HATA DIYA GAYA HAI
+    // ... Inside foldersSection()
+    // 🌟 FIX: Restored the typeMap! Enums MUST have this to avoid navigation serialization crashes.
     composable<Screen.UnifiedFolder>(
+        typeMap = mapOf(typeOf<FolderType>() to NavType.EnumType(FolderType::class.java)),
         enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(350)) },
         exitTransition = { fadeOut(animationSpec = tween(200)) },
         popEnterTransition = { fadeIn(animationSpec = tween(200)) },
         popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(350)) }
     ) { backStackEntry ->
+// ... rest of the code ...
         val args = backStackEntry.toRoute<Screen.UnifiedFolder>()
 
         UnifiedFolderScreen(
             onBack = { navController.popBackStack() },
             onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
-            onFolderNavigate = { id, name, type -> navController.navigate(Screen.UnifiedFolder(id, name, type)) },
+            onFolderNavigate = { id, name, type ->
+                // 🌟 ENCODE KARKE BHEJ RAHE HAIN
+                navController.navigate(Screen.UnifiedFolder(android.net.Uri.encode(id), android.net.Uri.encode(name), type))
+            },
             onBreadcrumbNavigate = { folder ->
                 if (folder == null) {
                     if (args.folderType == FolderType.PHYSICAL_DEVICE) {
@@ -2308,7 +2881,7 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController) {
                     }
                 } else {
                     val bType = FolderType.VIRTUAL_HUB
-                    navController.popBackStack(Screen.UnifiedFolder(folder.folderId, folder.name, bType), inclusive = false)
+                    navController.popBackStack(Screen.UnifiedFolder(android.net.Uri.encode(folder.folderId), android.net.Uri.encode(folder.name), bType), inclusive = false)
                 }
             }
         )
@@ -2812,64 +3385,29 @@ package com.edu.pdf.presentation.folders
 
 import android.content.Intent
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.folders.components.FolderMenuSheet
@@ -3129,122 +3667,12 @@ fun UnifiedFolderOverlays(
 
         // 🌟 2026 PREMIUM FULL-SCREEN PICKER UX
         is UnifiedFolderSheetState.AppPdfPicker -> {
-            var selectedIds by remember { mutableStateOf(setOf<String>()) }
-            var searchQuery by remember { mutableStateOf("") }
-            val haptic = LocalHapticFeedback.current
-
-            // On-the-fly Instant Search
-            val filteredPdfs = remember(searchQuery, sheetState.allPdfs) {
-                if (searchQuery.isBlank()) sheetState.allPdfs
-                else sheetState.allPdfs.filter { it.name.contains(searchQuery, ignoreCase = true) }
-            }
-
-            Dialog(
-                onDismissRequest = { onAction(UnifiedFolderAction.CloseSheet) },
-                properties = DialogProperties(
-                    usePlatformDefaultWidth = false, // Takes full screen
-                    decorFitsSystemWindows = false
-                )
-            ) {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = MaterialTheme.colorScheme.background,
-                    topBar = {
-                        Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    IconButton(onClick = { onAction(UnifiedFolderAction.CloseSheet) }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Close")
-                                    }
-                                    Text("Select PDFs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-
-                                    AnimatedVisibility(visible = selectedIds.isNotEmpty()) {
-                                        Button(
-                                            onClick = { onAction(UnifiedFolderAction.MovePdfsToCurrentFolder(selectedIds.toList())) },
-                                            modifier = Modifier.padding(end = 8.dp)
-                                        ) {
-                                            Text("Add (${selectedIds.size})", fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                                // Live Premium Search Bar
-                                OutlinedTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                    placeholder = { Text("Search files...") },
-                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(24.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                            }
-                        }
-                    }
-                ) { padding ->
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(padding)
-                    ) {
-                        if (filteredPdfs.isEmpty()) {
-                            item {
-                                Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                                    Text("No files found", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        } else {
-                            items(items = filteredPdfs, key = { it.id }) { pdf ->
-                                val isSelected = selectedIds.contains(pdf.id)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            selectedIds = if (isSelected) selectedIds - pdf.id else selectedIds + pdf.id
-                                        }
-                                        .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                                    }
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = pdf.name,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = android.text.format.Formatter.formatShortFileSize(context, pdf.sizeInBytes),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
-                                        contentDescription = null,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+            com.edu.pdf.presentation.common.picker.GlobalPdfPickerSheet(
+                onDismiss = { onAction(UnifiedFolderAction.CloseSheet) },
+                onPdfsSelected = { selectedIds ->
+                    onAction(UnifiedFolderAction.MovePdfsToCurrentFolder(selectedIds))
                 }
-            }
+            )
         }
     }
 }
@@ -3261,13 +3689,13 @@ private fun DetailRow(label: String, value: String) {
 ``kotlin
 package com.edu.pdf.presentation.folders
 
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -3307,6 +3735,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -3317,8 +3747,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
 import com.edu.pdf.presentation.home.HomeAction
@@ -3327,16 +3763,6 @@ import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
 import com.edu.pdf.presentation.home.components.UnifiedListItem
-import com.edu.pdf.presentation.home.selection.SelectionViewModel
-import android.content.Intent
-import android.widget.Toast
-import androidx.core.net.toUri
-import androidx.activity.ComponentActivity
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.paging.compose.collectAsLazyPagingItems
 
 @Composable
 fun UnifiedFolderScreen(
@@ -3345,48 +3771,53 @@ fun UnifiedFolderScreen(
     onFolderNavigate: (String, String, FolderType) -> Unit,
     onBreadcrumbNavigate: (Folder?) -> Unit,
     viewModel: UnifiedFolderViewModel = hiltViewModel(),
-    homeViewModel: HomeViewModel = hiltViewModel(),
-    selectionViewModel: SelectionViewModel = hiltViewModel()
+    homeViewModel: HomeViewModel = hiltViewModel()
+    // 🌟 SELECTION VIEWMODEL DELETED! Ab ye Unified architecture hai
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val pagedPhysicalItems = viewModel.pagedPhysicalItems.collectAsLazyPagingItems()
     val foldersTree by homeViewModel.foldersTree.collectAsStateWithLifecycle()
-    val isSelectionMode by selectionViewModel.isSelectionMode.collectAsStateWithLifecycle()
-    val selectedPdfs by selectionViewModel.selectedPdfs.collectAsStateWithLifecycle()
+
+    // 🌟 DATA AB UI STATE SE AYEGA
+    val isSelectionMode = uiState.isSelectionMode
+    val selectedPdfs = uiState.selectedIds
+
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
-    // 🌟 GOD MODE SECURITY: Anti-Screenshot & Auto-Background Kickout
+    LaunchedEffect(viewModel.events, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is UnifiedFolderEvent.ShowSnackbar -> {
+                        Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    }
+                    is UnifiedFolderEvent.ClearMultiSelection -> {
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
+                    }
+                }
+            }
+        }
+    }
     if (uiState.folderType == FolderType.SECURE_VAULT) {
         DisposableEffect(lifecycleOwner) {
             val activity = context as? ComponentActivity
-            // 1. Block Screenshots & Screen Recording
             activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-
-            // 2. Auto-Lock Engine
             val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_PAUSE) {
-                    onBack() // App minimize hote hi bahar nikal do
-                }
+                if (event == Lifecycle.Event.ON_PAUSE) onBack()
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-
             onDispose {
-                // 3. Screenshot dobara allow kar do
                 activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                 lifecycleOwner.lifecycle.removeObserver(observer)
             }
         }
     }
-    // 🌟 GOD MODE UI CACHING
-    val selectedIdsSet by remember(selectedPdfs) {
-        androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
-    }
-    val selectedItems by remember(uiState.items, selectedIdsSet) {
+
+    val selectedItems by remember(uiState.items, selectedPdfs) {
         androidx.compose.runtime.derivedStateOf {
-            if (selectedIdsSet.isEmpty()) emptyList()
-            else uiState.items.filter { it.id in selectedIdsSet }
+            if (selectedPdfs.isEmpty()) emptyList()
+            else uiState.items.filter { it.id in selectedPdfs }
         }
     }
 
@@ -3396,8 +3827,7 @@ fun UnifiedFolderScreen(
 
     BackHandler {
         if (isSelectionMode) {
-            selectionViewModel.clearSelection()
-            selectionViewModel.setSelectionMode(false)
+            viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
         } else {
             onBack()
         }
@@ -3406,8 +3836,8 @@ fun UnifiedFolderScreen(
     val onLongPressEnableSelection: (String) -> Unit = { id ->
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (!isSelectionMode) {
-            selectionViewModel.setSelectionMode(true)
-            if (!selectedPdfs.contains(id)) selectionViewModel.toggleSelection(id)
+            viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+            if (!selectedPdfs.contains(id)) viewModel.onAction(UnifiedFolderAction.ToggleSelection(id))
         }
     }
 
@@ -3419,13 +3849,12 @@ fun UnifiedFolderScreen(
                     selectedCount = selectedPdfs.size,
                     totalCount = uiState.items.size,
                     onClearSelection = {
-                        selectionViewModel.clearSelection()
-                        selectionViewModel.setSelectionMode(false)
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
                     },
                     onSelectAllToggle = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        if (selectedPdfs.size == uiState.items.size) selectionViewModel.clearSelection()
-                        else selectionViewModel.selectAll(uiState.items.map { it.id })
+                        if (selectedPdfs.size == uiState.items.size) viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
+                        else viewModel.onAction(UnifiedFolderAction.SelectAll(uiState.items.map { it.id }))
                     }
                 )
             } else {
@@ -3433,16 +3862,14 @@ fun UnifiedFolderScreen(
                     title = uiState.folderName,
                     isGridView = uiState.isGridView,
                     canCreateSubFolders = uiState.canCreateSubFolders,
-                    isEmpty = uiState.items.isEmpty(),
-                    onBackClick = onBack,
+                    onBackClick = { onBreadcrumbNavigate(null) },
                     onAddFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
                     onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                     onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
                     onSelectClick = {
-                        selectionViewModel.setSelectionMode(true)
-                        selectionViewModel.selectAll(uiState.items.map { it.id })
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+                        viewModel.onAction(UnifiedFolderAction.SelectAll(uiState.items.map { it.id }))
                     }
-                    // 🌟 ELITE UX: Import is NO LONGER in the top bar!
                 )
             }
         },
@@ -3453,11 +3880,8 @@ fun UnifiedFolderScreen(
                     tabIndex = 1,
                     onDelete = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DeleteConfirm(selectedItems))) },
                     onMove = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.MovePicker(selectedItems))) },
-                    onMerge = {
-                        Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show()
-                    },
+                    onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
                     onShare = {
-                        // 🌟 2026 PRO FIX: Type inference aur toUri error fixed
                         val pdfUris = selectedItems.mapNotNull { it as? com.edu.pdf.domain.model.HomeItem.PdfItem }.map { it.pdf.id.toUri() }
                         if (pdfUris.isNotEmpty()) {
                             val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
@@ -3479,28 +3903,19 @@ fun UnifiedFolderScreen(
         Column(modifier = Modifier.padding(paddingValues)) {
 
             if (uiState.breadcrumbs.isNotEmpty()) {
-                UnifiedBreadcrumbs(
+                com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                     breadcrumbs = uiState.breadcrumbs,
-                    onBreadcrumbClick = { folder -> onBreadcrumbNavigate(folder) }
+                    onNavigate = { folder -> onBreadcrumbNavigate(folder) }
                 )
             }
 
             if (uiState.items.isEmpty() && !uiState.isLoading) {
-                // 🌟 ELITE UX: The NEW Pro Empty State!
                 PremiumEmptyState(
                     canImport = uiState.canImport,
                     canCreateFolder = uiState.canCreateSubFolders,
                     onImportFromDeviceClick = { filePicker.launch("application/pdf") },
-                    onImportFromAppClick = {
-                        viewModel.onAction(UnifiedFolderAction.OpenAppPdfPicker)
-
-                        // 🌟 NEXT PHASE: Ye humein app ke main PDF list pe le jayega (Move UI)
-                        viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.None))
-                        Toast.makeText(context, "Select files from Home to move here", Toast.LENGTH_LONG).show()
-                    },
-                    onCreateFolderClick = {
-                        viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId)))
-                    }
+                    onImportFromAppClick = { viewModel.onAction(UnifiedFolderAction.OpenAppPdfPicker) },
+                    onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) }
                 )
             } else {
                 if (uiState.isGridView) {
@@ -3521,13 +3936,12 @@ fun UnifiedFolderScreen(
                                         else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
                                     }
                                 },
-                                onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
                             )
                         }
                     }
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-                        // 🌟 2026 PRO UX: Agar ye Paging wala data hai (Physical Folder)
                         if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
                             items(
                                 count = pagedPhysicalItems.itemCount,
@@ -3544,12 +3958,11 @@ fun UnifiedFolderScreen(
                                                 else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
                                             }
                                         },
-                                        onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                        onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
                                     )
                                 }
                             }
                         } else {
-                            // Virtual aur Vault Folders ke liye purana method
                             items(uiState.items, key = { it.id }) { item ->
                                 UnifiedListItem(
                                     item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
@@ -3560,7 +3973,7 @@ fun UnifiedFolderScreen(
                                             else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
                                         }
                                     },
-                                    onToggleSelection = { selectionViewModel.toggleSelection(it) }, onLongPress = onLongPressEnableSelection
+                                    onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
                                 )
                             }
                         }
@@ -3572,13 +3985,11 @@ fun UnifiedFolderScreen(
     }
 }
 
-// 🌟 CLEAN TOP BAR
 @Composable
 fun UnifiedCustomTopBar(
     title: String,
     isGridView: Boolean,
     canCreateSubFolders: Boolean,
-    isEmpty: Boolean,
     onBackClick: () -> Unit,
     onAddFolderClick: () -> Unit,
     onSortClick: () -> Unit,
@@ -3595,20 +4006,17 @@ fun UnifiedCustomTopBar(
 
             if (canCreateSubFolders) IconButton(onClick = onAddFolderClick) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
 
-            // Hides these icons automatically if folder is empty!
-            AnimatedVisibility(visible = !isEmpty, enter = fadeIn(), exit = fadeOut()) {
-                Row {
-                    IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
-                    IconButton(onClick = onToggleView) { Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View") }
-                    IconButton(onClick = onSelectClick) { Icon(Icons.Outlined.CheckBox, "Select") }
-                }
+            // 🌟 FIX: AnimatedVisibility(!isEmpty) yahan se hata diya gaya hai.
+            // Ab folder empty hone par bhi List/Grid aur Sort ke icons humesha dikhenge!
+            Row {
+                IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
+                IconButton(onClick = onToggleView) { Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View") }
+                IconButton(onClick = onSelectClick) { Icon(Icons.Outlined.CheckBox, "Select") }
             }
         }
     }
 }
 
-// 🌟 PREMIUM EMPTY STATE WITH IMPORT BUTTON
-// 🌟 2026 PRO UX: Premium Empty State with 3 Action Cards
 @Composable
 fun PremiumEmptyState(
     canImport: Boolean,
@@ -3618,122 +4026,36 @@ fun PremiumEmptyState(
     onCreateFolderClick: () -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Options List
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (canImport) {
-                // Option 1: Add from this app
-                ProEmptyStateCard(
-                    title = "Add from this app",
-                    icon = Icons.Default.Home,
-                    iconTint = MaterialTheme.colorScheme.error,
-                    onClick = onImportFromAppClick
-                )
-
-                // Option 2: Add from device
-                ProEmptyStateCard(
-                    title = "Add from device",
-                    icon = Icons.Default.PhoneAndroid,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    onClick = onImportFromDeviceClick
-                )
+                ProEmptyStateCard(title = "Add from this app", icon = Icons.Default.Home, iconTint = MaterialTheme.colorScheme.error, onClick = onImportFromAppClick)
+                ProEmptyStateCard(title = "Add from device", icon = Icons.Default.PhoneAndroid, iconTint = MaterialTheme.colorScheme.primary, onClick = onImportFromDeviceClick)
             }
-
             if (canCreateFolder) {
-                // Option 3: Create folder
-                ProEmptyStateCard(
-                    title = "Create folder",
-                    icon = Icons.Default.Folder,
-                    iconTint = MaterialTheme.colorScheme.tertiary, // Premium Yellow
-                    onClick = onCreateFolderClick
-                )
+                ProEmptyStateCard(title = "Create folder", icon = Icons.Default.Folder, iconTint = MaterialTheme.colorScheme.tertiary, onClick = onCreateFolderClick)
             }
         }
     }
 }
 
 @Composable
-private fun ProEmptyStateCard(
-    title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconTint: Color,
-    onClick: () -> Unit
-) {
+private fun ProEmptyStateCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, iconTint: Color, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(24.dp)
-                )
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp))
             }
             Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun UnifiedBreadcrumbs(
-    breadcrumbs: List<Folder>,
-    onBreadcrumbClick: (Folder?) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "Home",
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.clickable { onBreadcrumbClick(null) }.padding(4.dp)
-        )
-        breadcrumbs.forEach { folder ->
-            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
-            val isLast = folder == breadcrumbs.last()
-            Text(
-                text = folder.name,
-                fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium,
-                color = if (isLast) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .padding(4.dp)
-                    .clickable(enabled = !isLast) { onBreadcrumbClick(folder) }
-            )
+            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+            Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -3745,6 +4067,7 @@ package com.edu.pdf.presentation.folders
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavType
 import androidx.navigation.toRoute
 import androidx.paging.cachedIn
 import androidx.paging.map
@@ -3760,8 +4083,11 @@ import com.edu.pdf.domain.usecase.RenamePdfUseCase
 import com.edu.pdf.presentation.navigation.Screen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -3769,16 +4095,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import kotlin.reflect.typeOf
 
 sealed interface UnifiedFolderSheetState {
     data object None : UnifiedFolderSheetState
@@ -3789,7 +4118,7 @@ sealed interface UnifiedFolderSheetState {
     data class DetailsDialog(val item: HomeItem) : UnifiedFolderSheetState
     data class DeleteConfirm(val items: List<HomeItem>) : UnifiedFolderSheetState
     data class MovePicker(val items: List<HomeItem>) : UnifiedFolderSheetState
-    data class AppPdfPicker(val allPdfs: List<com.edu.pdf.domain.model.PdfFile>) : UnifiedFolderSheetState
+    data object AppPdfPicker : UnifiedFolderSheetState
 }
 
 sealed interface UnifiedFolderEvent {
@@ -3798,6 +4127,11 @@ sealed interface UnifiedFolderEvent {
 }
 
 sealed interface UnifiedFolderAction {
+    // 🌟 SELECTION ACTIONS INCLUDED
+    data class ToggleSelection(val id: String) : UnifiedFolderAction
+    data class SetSelectionMode(val enabled: Boolean) : UnifiedFolderAction
+    data class SelectAll(val ids: List<String>) : UnifiedFolderAction
+
     data class OpenSheet(val state: UnifiedFolderSheetState) : UnifiedFolderAction
     data object CloseSheet : UnifiedFolderAction
     data class OnTextInputChange(val text: String) : UnifiedFolderAction
@@ -3822,6 +4156,11 @@ data class UnifiedFolderUiState(
     val folderName: String = "",
     val items: ImmutableList<HomeItem> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
+
+    // 🌟 SELECTION STATE (MVI CLEAN ARCHITECTURE)
+    val isSelectionMode: Boolean = false,
+    val selectedIds: PersistentSet<String> = persistentSetOf(),
+
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: UnifiedFolderSheetState = UnifiedFolderSheetState.None,
@@ -3842,19 +4181,30 @@ class UnifiedFolderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val args = savedStateHandle.toRoute<Screen.UnifiedFolder>()
+    // UnifiedFolderViewModel.kt me in lines ko aise update karo:
+    private val args = savedStateHandle.toRoute<Screen.UnifiedFolder>(
+        mapOf(typeOf<FolderType>() to NavType.EnumType(FolderType::class.java))
+    )
+
     private val currentFolderId = args.folderId
     private val currentFolderType = args.folderType
-
     private val actualFolderId = when {
-        currentFolderId.isBlank() || currentFolderId == "root" || currentFolderId == "vault_root" -> null
+        currentFolderId.isBlank() || currentFolderId == "root" -> null
         else -> currentFolderId
     }
+// ... rest of the logic ...
 
     private val _events = Channel<UnifiedFolderEvent>()
-
+    val events = _events.receiveAsFlow()
     private val _sortType = MutableStateFlow(SortType.DATE_DESC)
-    private val _internalState = MutableStateFlow(UnifiedFolderUiState(folderId = currentFolderId, folderName = args.folderName, folderType = currentFolderType))
+
+    private val _internalState = MutableStateFlow(
+        UnifiedFolderUiState(
+            folderId = currentFolderId,
+            folderName = android.net.Uri.decode(args.folderName), // 🌟 Ise bhi decode kar diya
+            folderType = currentFolderType
+        )
+    )
 
     val pagedPhysicalItems = repository.getPaginatedPdfsInPhysicalFolder(actualFolderId ?: "")
         .map { pagingData ->
@@ -3862,7 +4212,7 @@ class UnifiedFolderViewModel @Inject constructor(
                 HomeItem.PdfItem(pdfFile) as HomeItem
             }
         }
-        .cachedIn(viewModelScope) // 🌟 Ye RAM ko optimize karta hai
+        .cachedIn(viewModelScope)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val physicalItemsFlow = _sortType.flatMapLatest { sort ->
@@ -3881,12 +4231,38 @@ class UnifiedFolderViewModel @Inject constructor(
 
     private val virtualItemsFlow = combine(
         repository.getManagedFolders(actualFolderId, currentFolderType == FolderType.SECURE_VAULT),
-        repository.getManagedPdfs(actualFolderId, currentFolderType == FolderType.SECURE_VAULT)
-    ) { folders, pdfs ->
-        val folderItems = folders.map { HomeItem.FolderItem(it) }
-        val pdfItems = pdfs.map { HomeItem.PdfItem(it) }
-        (folderItems + pdfItems).toImmutableList()
-    }
+        repository.getManagedPdfs(actualFolderId, currentFolderType == FolderType.SECURE_VAULT),
+        _sortType
+    ) { folders, pdfs, sort ->
+
+        val folderComparator = Comparator<Folder> { f1, f2 ->
+            when (sort) {
+                SortType.NAME_ASC -> f1.name.compareTo(f2.name, ignoreCase = true)
+                SortType.NAME_DESC -> f2.name.compareTo(f1.name, ignoreCase = true)
+                SortType.DATE_ASC -> f1.createdAt.compareTo(f2.createdAt)
+                SortType.DATE_DESC -> f2.createdAt.compareTo(f1.createdAt)
+                SortType.SIZE_ASC -> f1.pdfCount.compareTo(f2.pdfCount)
+                SortType.SIZE_DESC -> f2.pdfCount.compareTo(f1.pdfCount)
+            }
+        }
+
+        val pdfComparator = Comparator<com.edu.pdf.domain.model.PdfFile> { p1, p2 ->
+            when (sort) {
+                SortType.NAME_ASC -> p1.name.compareTo(p2.name, ignoreCase = true)
+                SortType.NAME_DESC -> p2.name.compareTo(p1.name, ignoreCase = true)
+                SortType.DATE_ASC -> p1.lastModified.compareTo(p2.lastModified)
+                SortType.DATE_DESC -> p2.lastModified.compareTo(p1.lastModified)
+                SortType.SIZE_ASC -> p1.sizeInBytes.compareTo(p2.sizeInBytes)
+                SortType.SIZE_DESC -> p2.sizeInBytes.compareTo(p1.sizeInBytes)
+            }
+        }
+
+        val sortedFolders = folders.sortedWith(folderComparator).map { HomeItem.FolderItem(it) }
+        val sortedPdfs = pdfs.sortedWith(pdfComparator).map { HomeItem.PdfItem(it) }
+
+        (sortedFolders + sortedPdfs).toImmutableList()
+
+    }.flowOn(Dispatchers.Default)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val itemsFlow = if (currentFolderType == FolderType.PHYSICAL_DEVICE) physicalItemsFlow else virtualItemsFlow
@@ -3920,10 +4296,32 @@ class UnifiedFolderViewModel @Inject constructor(
             canImport = !isPhysical,
             canRenameOrDelete = !isPhysical
         )
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
+    }
+        .distinctUntilChanged() // 🌟 ELITE FIX: UI tabhi recompose hoga jab actual data badlega!
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
 
     fun onAction(action: UnifiedFolderAction) {
         when (action) {
+            // 🌟 SELECTION LOGIC
+            is UnifiedFolderAction.ToggleSelection -> {
+                val currentSelected = _internalState.value.selectedIds
+                val newSelection = if (currentSelected.contains(action.id)) currentSelected.remove(action.id) else currentSelected.add(action.id)
+                _internalState.update { it.copy(selectedIds = newSelection) }
+            }
+            is UnifiedFolderAction.SetSelectionMode -> {
+                _internalState.update {
+                    it.copy(
+                        isSelectionMode = action.enabled,
+                        selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds
+                    )
+                }
+            }
+            is UnifiedFolderAction.SelectAll -> {
+                _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
+            }
+
+            // BAAKI ACTIONS
             is UnifiedFolderAction.OpenSheet -> {
                 val initialText = if (action.state is UnifiedFolderSheetState.RenameDialog) action.state.currentName else ""
                 _internalState.update { it.copy(activeSheetState = action.state, textInput = initialText) }
@@ -4023,12 +4421,7 @@ class UnifiedFolderViewModel @Inject constructor(
             }
 
             is UnifiedFolderAction.OpenAppPdfPicker -> {
-                viewModelScope.launch {
-                    val allPdfs = repository.getAllPdfs(SortType.DATE_DESC).first()
-                    withContext(Dispatchers.Main) {
-                        _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.AppPdfPicker(allPdfs)) }
-                    }
-                }
+                _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.AppPdfPicker) }
             }
 
             is UnifiedFolderAction.MovePdfsToCurrentFolder -> {
@@ -4191,20 +4584,43 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+// 🌟 THE ELITE FIX: Hilt-aware wrapper for Navigation Graph
 @Composable
 fun VaultScreen(
     onBack: () -> Unit,
     onPdfClick: (String) -> Unit,
     viewModel: VaultViewModel = hiltViewModel()
 ) {
-    val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-
     val vaultPdfs by viewModel.vaultPdfs.collectAsStateWithLifecycle()
-    val pickerPdfs by viewModel.pickerPdfs.collectAsStateWithLifecycle() // 🌟 NAYA: On-demand list
+    val pickerPdfs by viewModel.pickerPdfs.collectAsStateWithLifecycle()
     val decryptionProgress by viewModel.decryptionProgress.collectAsStateWithLifecycle()
     val isGridView by viewModel.isGridView.collectAsStateWithLifecycle()
+
+    VaultScreenPure(
+        vaultPdfs = vaultPdfs,
+        pickerPdfs = pickerPdfs,
+        decryptionProgress = decryptionProgress,
+        isGridView = isGridView,
+        onBack = onBack,
+        onPdfClick = onPdfClick,
+        onAction = viewModel::onAction
+    )
+}
+
+// 🌟 THE ELITE FIX: Pure UI Component (Testable & Previewable)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VaultScreenPure(
+    vaultPdfs: List<PdfFile>,
+    pickerPdfs: List<PdfFile>?,
+    decryptionProgress: Float?,
+    isGridView: Boolean,
+    onBack: () -> Unit,
+    onPdfClick: (String) -> Unit,
+    onAction: (VaultAction) -> Unit
+) {
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
 
     var selectedPdfForActions by remember { mutableStateOf<PdfFile?>(null) }
 
@@ -4220,7 +4636,7 @@ fun VaultScreen(
                 actions = {
                     IconButton(onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                        viewModel.toggleViewMode()
+                        onAction(VaultAction.ToggleViewMode)
                     }) {
                         Icon(
                             imageVector = if (isGridView) Icons.AutoMirrored.Rounded.ViewList else Icons.Rounded.GridView,
@@ -4229,8 +4645,7 @@ fun VaultScreen(
                     }
                     IconButton(onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                        // 🌟 Data sirf tab load hoga jab click karoge
-                        viewModel.loadPublicPdfsForPicker()
+                        onAction(VaultAction.LoadPublicPdfs)
                     }) {
                         Icon(Icons.Rounded.Add, contentDescription = "Add PDF")
                     }
@@ -4260,7 +4675,7 @@ fun VaultScreen(
                                 pdf = pdf,
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.getDecryptedPathForViewing(pdf.path) { secureUri -> onPdfClick(secureUri) }
+                                    onAction(VaultAction.OpenPdf(pdf.path) { secureUri -> onPdfClick(secureUri) })
                                 },
                                 onLongClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -4281,7 +4696,7 @@ fun VaultScreen(
                                 pdf = pdf,
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.getDecryptedPathForViewing(pdf.path) { secureUri -> onPdfClick(secureUri) }
+                                    onAction(VaultAction.OpenPdf(pdf.path) { secureUri -> onPdfClick(secureUri) })
                                 },
                                 onLongClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -4327,11 +4742,11 @@ fun VaultScreen(
 
     if (pickerPdfs != null) {
         VaultAppPickerSheet(
-            pdfs = pickerPdfs!!,
-            onDismiss = { viewModel.closePicker() }, // 🌟 RAM Clear
+            pdfs = pickerPdfs,
+            onDismiss = { onAction(VaultAction.ClosePicker) },
             onPdfSelected = { pdf ->
-                viewModel.moveFromAppToVault(listOf(pdf.id))
-                viewModel.closePicker() // Hide the picker
+                onAction(VaultAction.MoveToVault(listOf(pdf.id)))
+                onAction(VaultAction.ClosePicker)
             }
         )
     }
@@ -4343,23 +4758,25 @@ fun VaultScreen(
             onFavoriteToggle = { },
             onShare = { },
             onRenameConfirm = { newName ->
-                viewModel.renamePdf(pdf, newName)
+                onAction(VaultAction.RenamePdf(pdf, newName))
                 selectedPdfForActions = null
             },
             onDelete = {
-                viewModel.deletePdf(pdf)
+                onAction(VaultAction.DeletePdf(pdf))
                 selectedPdfForActions = null
             },
             onDetails = { },
             onActionClick = { actionName ->
                 if (actionName.contains("Restore", ignoreCase = true) || actionName.contains("Move", ignoreCase = true) || actionName.contains("Remove", ignoreCase = true)) {
-                    viewModel.removeFromVault(pdf.id)
+                    onAction(VaultAction.RemoveFromVault(pdf.id))
                 }
                 selectedPdfForActions = null
             }
         )
     }
 }
+
+// ... Baaki code (VaultAppPickerSheet, VaultPdfListItem, VaultPdfGridItem) waise hi rehne dein ...
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -4471,6 +4888,18 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
+// 🌟 THE ELITE FIX: MVI Actions Interface
+sealed interface VaultAction {
+    data object LoadPublicPdfs : VaultAction
+    data object ClosePicker : VaultAction
+    data object ToggleViewMode : VaultAction
+    data class OpenPdf(val pdfPath: String, val onReady: (String) -> Unit) : VaultAction
+    data class MoveToVault(val pdfIds: List<String>) : VaultAction
+    data class RemoveFromVault(val pdfId: String) : VaultAction
+    data class DeletePdf(val pdf: PdfFile) : VaultAction
+    data class RenamePdf(val pdf: PdfFile, val newName: String) : VaultAction
+}
+
 @HiltViewModel
 class VaultViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -4484,7 +4913,6 @@ class VaultViewModel @Inject constructor(
     val vaultPdfs = repository.getManagedPdfs(parentId = null, isVault = true)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // 🌟 2026 FIX: RAM bachaane ke liye on-demand list loading
     private val _pickerPdfs = MutableStateFlow<List<PdfFile>?>(null)
     val pickerPdfs = _pickerPdfs.asStateFlow()
 
@@ -4494,24 +4922,42 @@ class VaultViewModel @Inject constructor(
     private val _decryptionProgress = MutableStateFlow<Float?>(null)
     val decryptionProgress = _decryptionProgress.asStateFlow()
 
-    fun loadPublicPdfsForPicker() {
-        viewModelScope.launch(Dispatchers.IO) {
-            _pickerPdfs.value = repository.getAllPdfs(com.edu.pdf.domain.model.SortType.DATE_DESC).first()
+    // 🌟 MVI ACTION HANDLER
+    fun onAction(action: VaultAction) {
+        when (action) {
+            is VaultAction.LoadPublicPdfs -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    _pickerPdfs.value = repository.getAllPdfs(com.edu.pdf.domain.model.SortType.DATE_DESC).first()
+                }
+            }
+            is VaultAction.ClosePicker -> {
+                _pickerPdfs.value = null
+            }
+            is VaultAction.ToggleViewMode -> {
+                viewModelScope.launch {
+                    val currentGridState = userPreferences.isFolderGridViewFlow.first()
+                    userPreferences.saveFolderGridViewPreference(!currentGridState)
+                }
+            }
+            is VaultAction.OpenPdf -> {
+                getDecryptedPathForViewing(action.pdfPath, action.onReady)
+            }
+            is VaultAction.MoveToVault -> {
+                viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(action.pdfIds, null, isVault = true) }
+            }
+            is VaultAction.RemoveFromVault -> {
+                viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(listOf(action.pdfId), null, isVault = false) }
+            }
+            is VaultAction.DeletePdf -> {
+                viewModelScope.launch(Dispatchers.IO) { deletePdfsUseCase(listOf(action.pdf)) }
+            }
+            is VaultAction.RenamePdf -> {
+                viewModelScope.launch(Dispatchers.IO) { renamePdfUseCase(action.pdf, action.newName) }
+            }
         }
     }
 
-    fun closePicker() {
-        _pickerPdfs.value = null
-    }
-
-    fun toggleViewMode() {
-        viewModelScope.launch {
-            val currentGridState = userPreferences.isFolderGridViewFlow.first()
-            userPreferences.saveFolderGridViewPreference(!currentGridState)
-        }
-    }
-
-    fun getDecryptedPathForViewing(pdfPath: String, onReady: (String) -> Unit) {
+    private fun getDecryptedPathForViewing(pdfPath: String, onReady: (String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             _decryptionProgress.value = 0f
             val lockedFile = File(pdfPath)
@@ -4554,11 +5000,6 @@ class VaultViewModel @Inject constructor(
             }
         }
     }
-
-    fun moveFromAppToVault(pdfIds: List<String>) { viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(pdfIds, null, isVault = true) } }
-    fun removeFromVault(pdfId: String) { viewModelScope.launch(Dispatchers.IO) { repository.movePdfsToVirtualFolder(listOf(pdfId), null, isVault = false) } }
-    fun deletePdf(pdf: PdfFile) { viewModelScope.launch(Dispatchers.IO) { deletePdfsUseCase(listOf(pdf)) } }
-    fun renamePdf(pdf: PdfFile, newName: String) { viewModelScope.launch(Dispatchers.IO) { renamePdfUseCase(pdf, newName) } }
 }
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeOverlays.kt
@@ -4589,7 +5030,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
@@ -4635,7 +5075,6 @@ import com.edu.pdf.presentation.folders.components.FolderMenuSheet
 import com.edu.pdf.presentation.home.components.MoveFolderListItem
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.SortBottomSheet
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -5048,22 +5487,14 @@ fun HomeHierarchicalMovePickerSheet(
                         )
                     }
 
-                    breadcrumbs.forEach { folder ->
-                        Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            text = folder.name,
-                            fontWeight = if (folder.folderId == currentParentId) FontWeight.Bold else FontWeight.Medium,
-                            color = if (folder.folderId == currentParentId) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clickable {
-                                    if (currentParentId != folder.folderId) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        currentParentId = folder.folderId
-                                    }
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                        )
-                    }
+                    com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                        breadcrumbs = breadcrumbs,
+                        rootName = "Home",
+                        onNavigate = { folder ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            currentParentId = folder?.folderId
+                        }
+                    )
                 }
 
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
@@ -5163,7 +5594,6 @@ fun HomeHierarchicalMovePickerSheet(
 @file:Suppress("DEPRECATION")
 package com.edu.pdf.presentation.home
 
-import android.app.Activity
 import android.content.Intent
 import android.os.Environment
 import android.provider.Settings
@@ -5215,19 +5645,20 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavHostController
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBar
 import com.edu.pdf.presentation.common.PremiumNavigationRail
 import com.edu.pdf.presentation.common.UniversalTopBar
+import com.edu.pdf.presentation.folders.getActivity
 import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
-import com.edu.pdf.presentation.home.selection.SelectionViewModel
-import com.edu.pdf.presentation.navigation.Screen
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.coroutines.launch
 
@@ -5235,43 +5666,44 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreenWrapper(
     viewModel: HomeViewModel,
-    selectionViewModel: SelectionViewModel = hiltViewModel(),
     navController: NavHostController,
     onPdfClick: (String) -> Unit,
-    onSearchClick: () -> Unit
+    onSearchClick: () -> Unit,
+    onFolderClick: (String, String, com.edu.pdf.domain.model.FolderType) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(Environment.isExternalStorageManager()) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-    val isSelectionMode by selectionViewModel.isSelectionMode.collectAsStateWithLifecycle()
-    val selectedPdfs by selectionViewModel.selectedPdfs.collectAsStateWithLifecycle()
+
+    // 🌟 NAYA: Ab ye data viewModel ki uiState se aa raha hai
+    val isSelectionMode = uiState.isSelectionMode
+    val selectedPdfs = uiState.selectedIds
+
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         hasPermission = Environment.isExternalStorageManager()
         if (hasPermission) viewModel.onAction(HomeAction.RefreshData)
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.events.collect { event ->
-            when (event) {
-                // 🌟 FIX 1 & 2: Added NavigateToPdf back, which fixes the "onPdfClick never used" warning
-                is HomeEvent.NavigateToPdf -> onPdfClick(event.path)
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-                is HomeEvent.NavigateToFolder -> {
-                    // 🌟 VIRTUAL HUB context ke saath navigate karein
-                    navController.navigate(
-                        Screen.UnifiedFolder(
-                            folderId = event.folderId,
-                            folderName = event.folderName,
-                            folderType = com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB
+    LaunchedEffect(viewModel.events, lifecycleOwner) {
+        // Ye block tabhi chalega jab screen user ko dikh rahi hogi (STARTED state)
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is HomeEvent.NavigateToPdf -> onPdfClick(event.path)
+                    is HomeEvent.NavigateToFolder -> {
+                        onFolderClick(
+                            event.folderId,
+                            event.folderName,
+                            com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB
                         )
-                    )
+                    }
+                    is HomeEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    is HomeEvent.ClearMultiSelection -> viewModel.onAction(HomeAction.SetSelectionMode(false))
                 }
-
-                // 🌟 FIX 3: Added missing branches to make 'when' exhaustive
-                is HomeEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
-
-                is HomeEvent.ClearMultiSelection -> selectionViewModel.setSelectionMode(false)
             }
         }
     }
@@ -5292,18 +5724,20 @@ fun HomeScreenWrapper(
                 selectedPdfs = selectedPdfs,
                 navController = navController,
                 onSearchClick = onSearchClick,
-                onSelectionModeChange = selectionViewModel::setSelectionMode,
-                onToggleSelection = selectionViewModel::toggleSelection,
-                onSelectAll = selectionViewModel::selectAll,
+                // 🌟 NAYA: Ab hum HomeAction use kar rahe hain
+                onSelectionModeChange = { enabled -> viewModel.onAction(HomeAction.SetSelectionMode(enabled)) },
+                onToggleSelection = { id -> viewModel.onAction(HomeAction.ToggleSelection(id)) },
+                onSelectAll = { ids -> viewModel.onAction(HomeAction.SelectAll(ids)) },
                 onAction = viewModel::onAction
             )
             HomeOverlays(state = uiState, foldersTree = viewModel.foldersTree.collectAsStateWithLifecycle().value, onAction = viewModel::onAction)
         }
     }
 }
+
 @OptIn(
     androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi::class,
-    androidx.compose.material3.ExperimentalMaterial3Api::class // 🌟 Ye line add karne se saari warning gayab ho jayengi
+    androidx.compose.material3.ExperimentalMaterial3Api::class
 )
 @Composable
 fun HomeScreenPure(
@@ -5321,11 +5755,11 @@ fun HomeScreenPure(
     val haptic = LocalHapticFeedback.current
     var currentTab by rememberSaveable { mutableIntStateOf(1) }
     val context = LocalContext.current
-    // 🌟 2026 ARCHITECT FIX: Screen Size Detection
-    val windowSizeClass = calculateWindowSizeClass(activity = context as Activity)
-    val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
-    // 🌟 GOD MODE ARCHITECTURE: Pager state ko upar shift kiya taaki Top Bar aur Content sync rahein
+
+    val windowSizeClass = calculateWindowSizeClass(activity = context.getActivity() ?: return)
+    val isExpandedScreen = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
+
     val pagerState = rememberPagerState(pageCount = { 3 }, initialPage = 1)
     val coroutineScope = rememberCoroutineScope()
 
@@ -5394,65 +5828,59 @@ fun HomeScreenPure(
             }
         },
         bottomBar = {
-            // ==========================================
-            // 🌟 2026 TABLET LOGIC: Bottom Bar Visibility
-            // ==========================================
-            // Agar device Phone hai (!isTablet), tabhi ye neeche wala bar dikhega
-            if (!isTablet) {
-                AnimatedContent(
-                    targetState = isSelectionMode,
-                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                    label = "BottomBarTransition"
-                ) { selectionMode ->
-                    if (selectionMode) {
-                        // 🌟 GOD MODE UI CACHING (Tumhara original brilliant code)
-                        val selectedIdsSet by remember(selectedPdfs) {
-                            androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
-                        }
-                        val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                            androidx.compose.runtime.derivedStateOf {
-                                if (selectedIdsSet.isEmpty()) emptyList()
-                                else currentTabItems.filter { it.id in selectedIdsSet }
-                            }
-                        }
-
-                        ActionBottomBar(
-                            selectedItems = selectedItemsList,
-                            tabIndex = currentTab,
-                            onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                            onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                            onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                            onShare = {
-                                val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                                if (pdfUris.isNotEmpty()) {
-                                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                        type = "application/pdf"
-                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                                }
-                            },
-                            onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                            onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                        )
-                    } else {
-                        PremiumBottomBar(navController = navController)
+            // 🌟 THE ELITE FIX: Smart Bottom Bar Handling
+            // Agar Selection Mode ON hai, toh screen size chahe jo ho, ActionBar dikhao.
+            // Agar normal mode hai aur screen choti hai (Phone), toh PremiumBottomBar dikhao.
+            AnimatedContent(
+                targetState = isSelectionMode,
+                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
+                label = "BottomBarTransition"
+            ) { selectionMode ->
+                if (selectionMode) {
+                    val selectedIdsSet by remember(selectedPdfs) {
+                        androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
                     }
+                    val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
+                        androidx.compose.runtime.derivedStateOf {
+                            if (selectedIdsSet.isEmpty()) emptyList()
+                            else currentTabItems.filter { it.id in selectedIdsSet }
+                        }
+                    }
+
+                    ActionBottomBar(
+                        selectedItems = selectedItemsList,
+                        tabIndex = currentTab,
+                        onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                        onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                        onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                        onShare = {
+                            val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                            if (pdfUris.isNotEmpty()) {
+                                val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                    type = "application/pdf"
+                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                            }
+                        },
+                        onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                        onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                    )
+                } else if (!isExpandedScreen) {
+                    PremiumBottomBar(navController = navController)
                 }
             }
         }
     ) { paddingValues ->
-        // ==========================================
-        // 🌟 2026 TABLET LOGIC: Side-by-Side Split View
-        // ==========================================
+        // 🌟 THE ELITE FIX: Smooth Side-by-Side UI for Tablets
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues) // Scaffold ki padding Row par apply karni hai
+                .padding(paddingValues)
         ) {
-            // Agar Tablet hai aur user files select nahi kar raha hai, toh side mein Rail dikhao
-            if (isTablet && !isSelectionMode) {
+            // Agar screen badi hai (Tablet) aur user selection nahi kar raha, tab Rail dikhao
+            if (isExpandedScreen && !isSelectionMode) {
                 PremiumNavigationRail(navController = navController)
             }
 
@@ -5461,8 +5889,7 @@ fun HomeScreenPure(
                 isRefreshing = isRefreshing,
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
-                // 🌟 PRO FIX: Kyunki padding Row le chuka hai, isko 0.dp deni hai warna layout uper-neeche katega
-                paddingValues = PaddingValues(0.dp),
+                paddingValues = PaddingValues(0.dp), // Padding already Row par lag chuki hai
                 pagerState = pagerState,
                 onAction = onAction,
                 onToggleSelection = onToggleSelection,
@@ -5499,8 +5926,11 @@ import com.edu.pdf.domain.usecase.RenamePdfUseCase
 import com.edu.pdf.domain.usecase.ScanPdfsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -5539,6 +5969,11 @@ data class HomeUiState(
     val currentFolderItems: ImmutableList<HomeItem> = persistentListOf(),
     val favoritePdfs: ImmutableList<PdfFile> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
+
+    // 🌟 SELECTION STATE (MVI CLEAN ARCHITECTURE)
+    val isSelectionMode: Boolean = false,
+    val selectedIds: PersistentSet<String> = persistentSetOf(),
+
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: HomeSheetState = HomeSheetState.None,
@@ -5554,6 +5989,12 @@ sealed interface HomeEvent {
 }
 
 sealed interface HomeAction {
+    // 🌟 SELECTION ACTIONS
+    data class ToggleSelection(val id: String) : HomeAction
+    data class SetSelectionMode(val enabled: Boolean) : HomeAction
+    data class SelectAll(val ids: List<String>) : HomeAction
+
+    // NORMAL ACTIONS
     data class NavigateToVirtualFolder(val folder: Folder) : HomeAction
     data object NavigateUp : HomeAction
     data class OpenSheet(val state: HomeSheetState) : HomeAction
@@ -5603,11 +6044,37 @@ class HomeViewModel @Inject constructor(
 
     private val unifiedItemsFlow = combine(
         currentFolderId.flatMapLatest { repoId -> repository.getManagedFolders(repoId, isVault = false) },
-        currentFolderId.flatMapLatest { repoId -> repository.getManagedPdfs(repoId, isVault = false) }
-    ) { folders, pdfs ->
-        val folderItems = folders.map { HomeItem.FolderItem(it) }
-        val pdfItems = pdfs.map { HomeItem.PdfItem(it) }
-        (folderItems + pdfItems).toImmutableList()
+        currentFolderId.flatMapLatest { repoId -> repository.getManagedPdfs(repoId, isVault = false) },
+        _sortType
+    ) { folders, pdfs, sort ->
+
+        val folderComparator = Comparator<Folder> { f1, f2 ->
+            when (sort) {
+                SortType.NAME_ASC -> f1.name.compareTo(f2.name, ignoreCase = true)
+                SortType.NAME_DESC -> f2.name.compareTo(f1.name, ignoreCase = true)
+                SortType.DATE_ASC -> f1.createdAt.compareTo(f2.createdAt)
+                SortType.DATE_DESC -> f2.createdAt.compareTo(f1.createdAt)
+                SortType.SIZE_ASC -> f1.pdfCount.compareTo(f2.pdfCount)
+                SortType.SIZE_DESC -> f2.pdfCount.compareTo(f1.pdfCount)
+            }
+        }
+
+        val pdfComparator = Comparator<PdfFile> { p1, p2 ->
+            when (sort) {
+                SortType.NAME_ASC -> p1.name.compareTo(p2.name, ignoreCase = true)
+                SortType.NAME_DESC -> p2.name.compareTo(p1.name, ignoreCase = true)
+                SortType.DATE_ASC -> p1.lastModified.compareTo(p2.lastModified)
+                SortType.DATE_DESC -> p2.lastModified.compareTo(p1.lastModified)
+                SortType.SIZE_ASC -> p1.sizeInBytes.compareTo(p2.sizeInBytes)
+                SortType.SIZE_DESC -> p2.sizeInBytes.compareTo(p1.sizeInBytes)
+            }
+        }
+
+        val sortedFolders = folders.sortedWith(folderComparator).map { HomeItem.FolderItem(it) }
+        val sortedPdfs = pdfs.sortedWith(pdfComparator).map { HomeItem.PdfItem(it) }
+
+        (sortedFolders + sortedPdfs).toImmutableList()
+
     }.flowOn(Dispatchers.Default)
 
     val foldersTree: StateFlow<List<Folder>> = repository.getAllManagedFolders(isVault = false)
@@ -5659,7 +6126,10 @@ class HomeViewModel @Inject constructor(
             sortType = prefData.second,
             breadcrumbs = prefData.third.toImmutableList()
         )
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
+    }
+        .distinctUntilChanged() // 🌟 ELITE FIX: Background processing se UI freeze nahi hoga
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
     init {
         scanDeviceForData()
@@ -5671,6 +6141,32 @@ class HomeViewModel @Inject constructor(
 
     fun onAction(action: HomeAction) {
         when (action) {
+            // 🌟 NAYA: Selection handle karne ka logic
+            is HomeAction.ToggleSelection -> {
+                val currentSelected = _internalState.value.selectedIds
+                val newSelection = if (currentSelected.contains(action.id)) {
+                    currentSelected.remove(action.id)
+                } else {
+                    currentSelected.add(action.id)
+                }
+                _internalState.update { it.copy(selectedIds = newSelection) }
+            }
+
+            is HomeAction.SetSelectionMode -> {
+                _internalState.update {
+                    it.copy(
+                        isSelectionMode = action.enabled,
+                        selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds
+                    )
+                }
+            }
+
+            is HomeAction.SelectAll -> {
+                val allIds = action.ids.toPersistentSet()
+                _internalState.update { it.copy(selectedIds = allIds) }
+            }
+
+            // Purane Actions
             is HomeAction.NavigateToVirtualFolder -> {
                 viewModelScope.launch(Dispatchers.IO) {
                     repository.updateFolderLastOpenedTime(action.folder.folderId, System.currentTimeMillis())
@@ -5785,8 +6281,8 @@ class HomeViewModel @Inject constructor(
                         repository.updateLastOpenedTime(action.pdf.id, System.currentTimeMillis())
                         _events.send(HomeEvent.NavigateToPdf(action.pdf.path))
                     } else {
-                        _events.send(HomeEvent.ShowSnackbar("File moved or deleted by another app"))
-                        scanDeviceForData()
+                        _events.send(HomeEvent.ShowSnackbar("File moved or deleted externally. Removing..."))
+                        deletePdfsUseCase(listOf(action.pdf))
                     }
                 }
             }
@@ -5845,6 +6341,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.edu.pdf.domain.model.HomeItem
+import androidx.compose.ui.res.stringResource
+import com.edu.pdf.R // Isse aapka strings.xml link ho jayega
 
 @Composable
 fun ActionBottomBar(
@@ -5876,36 +6374,62 @@ fun ActionBottomBar(
         ) {
             // 1. DELETE
             ActionItem(
-                title = "Delete",
+                title = stringResource(R.string.action_delete),
                 icon = Icons.Default.Delete,
                 enabled = totalCount > 0,
-                disabledMessage = "Select items to delete",
+                disabledMessage = stringResource(R.string.msg_select_delete),
                 onClick = onDelete
             )
 
             // 2. DYNAMIC TAB ACTION
             when (tabIndex) {
-                0 -> ActionItem("Remove", Icons.Default.HistoryToggleOff, enabled = totalCount > 0, disabledMessage = "Select items to remove", onClick = onRemoveFromRecent)
-                1 -> ActionItem("Move", Icons.AutoMirrored.Filled.DriveFileMove, enabled = totalCount > 0, disabledMessage = "Select items to move", onClick = onMove)
-                2 -> ActionItem("Unfav", Icons.Default.BookmarkRemove, enabled = totalCount > 0, disabledMessage = "Select items to unfavorite", onClick = onUnfavorite)
+                0 -> ActionItem(
+                    title = stringResource(R.string.action_remove),
+                    icon = Icons.Default.HistoryToggleOff,
+                    enabled = totalCount > 0,
+                    disabledMessage = stringResource(R.string.msg_select_remove),
+                    onClick = onRemoveFromRecent
+                )
+                1 -> ActionItem(
+                    title = stringResource(R.string.action_move),
+                    icon = Icons.AutoMirrored.Filled.DriveFileMove,
+                    enabled = totalCount > 0,
+                    disabledMessage = stringResource(R.string.msg_select_move),
+                    onClick = onMove
+                )
+                2 -> ActionItem(
+                    title = stringResource(R.string.action_unfav),
+                    icon = Icons.Default.BookmarkRemove,
+                    enabled = totalCount > 0,
+                    disabledMessage = stringResource(R.string.msg_select_unfav),
+                    onClick = onUnfavorite
+                )
             }
 
-            // 3. MERGE (🌟 ALWAYS VISIBLE, but becomes colorless if folders are selected)
+            // 3. MERGE
             val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
-            val mergeMsg = if (hasFolderSelected) "Folders cannot be merged" else "Select at least 2 PDFs to merge"
+            val mergeMsg = if (hasFolderSelected)
+                stringResource(R.string.msg_no_merge_folder)
+            else
+                stringResource(R.string.msg_select_2_pdf)
+
             ActionItem(
-                title = "Merge",
+                title = stringResource(R.string.action_merge),
                 icon = Icons.AutoMirrored.Filled.CallMerge,
                 enabled = mergeEnabled,
                 disabledMessage = mergeMsg,
                 onClick = onMerge
             )
 
-            // 4. SHARE (🌟 ALWAYS VISIBLE, but becomes colorless if folders are selected)
+            // 4. SHARE
             val shareEnabled = totalCount > 0 && !hasFolderSelected
-            val shareMsg = if (hasFolderSelected) "Folders cannot be shared directly" else "Select PDFs to share"
+            val shareMsg = if (hasFolderSelected)
+                stringResource(R.string.msg_no_share_folder)
+            else
+                stringResource(R.string.msg_select_pdf_share)
+
             ActionItem(
-                title = "Share",
+                title = stringResource(R.string.action_share),
                 icon = Icons.Default.Share,
                 enabled = shareEnabled,
                 disabledMessage = shareMsg,
@@ -6038,34 +6562,23 @@ fun EmptyStateView(
 package com.edu.pdf.presentation.home.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.home.HomeAction
@@ -6098,16 +6611,13 @@ fun HomeContent(
         // 🌟 YEHAN SE 'HomeTabs' HATA DIYE GAYE HAIN KYUNKI WO UPAR SCROLL BAR ME CHIPAK GAYE HAIN
 
         if (state.breadcrumbs.isNotEmpty()) {
-            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                item {
-                    Text("Home", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { while(state.breadcrumbs.isNotEmpty()) onAction(HomeAction.NavigateUp) }.padding(4.dp))
-                    Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(16.dp), tint = Color.Gray)
+            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                breadcrumbs = state.breadcrumbs,
+                onNavigate = {
+                    // Root jane ke liye sab pop kardo
+                    while(state.breadcrumbs.isNotEmpty()) onAction(HomeAction.NavigateUp)
                 }
-                items(state.breadcrumbs) { folder ->
-                    Text(folder.name, color = if (folder == state.breadcrumbs.last()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary, fontWeight = if (folder == state.breadcrumbs.last()) FontWeight.Bold else FontWeight.Medium, modifier = Modifier.padding(4.dp))
-                    if (folder != state.breadcrumbs.last()) Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(16.dp), tint = Color.Gray)
-                }
-            }
+            )
         }
 
         HorizontalPager(
@@ -6438,18 +6948,17 @@ fun HomeFolderListItem(
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -6467,45 +6976,45 @@ fun HomeTabs(
         Triple(stringResource(R.string.tab_favorites), Icons.Default.Favorite, 2)
     )
 
-    SecondaryTabRow(
+    // 🌟 FIX: Switched to standard TabRow to access tabPositions safely.
+    // Isse hum negative constraints wale Compose crash se bach jayenge.
+    TabRow(
         selectedTabIndex = selectedTabIndex,
-        modifier = Modifier.height(48.dp),
-        // 🌟 PRO FIX: Yeh bhi 100% Sheesha!
-        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+        containerColor = Color.Transparent,
         divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)) },
-//...
-        indicator = {
-            Box(
-                modifier = Modifier
-                    .tabIndicatorOffset(selectedTabIndex)
-                    .wrapContentSize(Alignment.BottomCenter)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(50.dp)
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                        .background(MaterialTheme.colorScheme.primary)
-                )
+        indicator = { tabPositions ->
+            if (selectedTabIndex < tabPositions.size) {
+                val currentTab = tabPositions[selectedTabIndex]
+
+                // 🌟 MILITARY GUARD: Jab tak tab ki width valid (0 se zyada) nahi hoti,
+                // tab tak indicator animate nahi karega. No negative width = No crash!
+                if (currentTab.width > 0.dp) {
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(currentTab),
+                        height = 3.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     ) {
         homeTabsList.forEach { (title, icon, index) ->
             val isSelected = selectedTabIndex == index
-            val itemColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            val tintColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
 
             Tab(
                 selected = isSelected,
                 onClick = { onTabSelected(index) },
                 text = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(icon, null, modifier = Modifier.size(18.dp), tint = itemColor)
+                        Icon(icon, null, modifier = Modifier.size(18.dp), tint = tintColor)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = title,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = itemColor
+                            color = tintColor
                         )
                     }
                 }
@@ -7470,52 +7979,6 @@ fun SortBottomSheet(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\selection\SelectionViewModel.kt
-``kotlin
-package com.edu.pdf.presentation.home.selection
-
-import androidx.lifecycle.ViewModel
-import com.edu.pdf.domain.repository.PdfRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.collections.immutable.PersistentSet
-import kotlinx.collections.immutable.persistentSetOf
-import kotlinx.collections.immutable.toPersistentSet
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import javax.inject.Inject
-
-@HiltViewModel
-class SelectionViewModel @Inject constructor(
-    private val repository: PdfRepository
-) : ViewModel() {
-
-    private val _isSelectionMode = MutableStateFlow(false)
-    val isSelectionMode = _isSelectionMode.asStateFlow()
-
-    // 🌟 2026 FIX: Ab ye PersistentSet hai. Compose ko pata chalega ki ye stable hai.
-    private val _selectedPdfs = MutableStateFlow<PersistentSet<String>>(persistentSetOf())
-    val selectedPdfs = _selectedPdfs.asStateFlow()
-
-    fun setSelectionMode(enabled: Boolean) {
-        _isSelectionMode.value = enabled
-        if (!enabled) _selectedPdfs.value = persistentSetOf() // Reset to empty immutable set
-    }
-
-    fun toggleSelection(pdfId: String) {
-        val current = _selectedPdfs.value
-        // 🌟 MAGIC: .add() aur .remove() automatically ek NAYA PersistentSet return karte hain fast speed me
-        _selectedPdfs.value = if (current.contains(pdfId)) current.remove(pdfId) else current.add(pdfId)
-    }
-
-    fun selectAll(pdfIds: List<String>) {
-        _selectedPdfs.value = pdfIds.toPersistentSet()
-    }
-
-    fun clearSelection() {
-        _selectedPdfs.value = persistentSetOf()
-    }
-}
-``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\navigation\Screen.kt
 ``kotlin
 package com.edu.pdf.presentation.navigation
@@ -7523,11 +7986,6 @@ package com.edu.pdf.presentation.navigation
 import kotlinx.serialization.Serializable
 import com.edu.pdf.domain.model.FolderType
 
-/**
- * 🌟 PURE MVVM & CLEAN NAVIGATION
- * Ise hum 'Type-Safe Navigation' kehte hain.
- * Har ek object ya class ek unique screen ko represent karti hai.
- */
 sealed interface Screen {
 
     @Serializable
@@ -7547,21 +8005,14 @@ sealed interface Screen {
     @Serializable
     data object Search : Screen
 
-    /**
-     * 🌟 GOD MODE NAVIGATION UPGRADE:
-     * Purane 'FolderDetail' aur 'NestedFolder' ko hata kar humne
-     * ek 'UnifiedFolder' bana diya hai. Ab physical, virtual aur vault sab yahi khulenge.
-     */
+    // 🌟 THE ELITE FIX: Default values hata diye taaki crash na ho aur strict matching ho
     @Serializable
     data class UnifiedFolder(
-        val folderId: String,      // Physical Path ya Virtual UUID yahan aayega
+        val folderId: String,
         val folderName: String,
-        val folderType: FolderType // Ye batayega ki folder kis type ka hai
+        val folderType: FolderType
     ) : Screen
 
-    /**
-     * PdfViewer: PDF open karne ke liye sirf uska file path chahiye.
-     */
     @Serializable
     data class PdfViewer(val pdfPath: String) : Screen
 
@@ -7773,9 +8224,10 @@ fun PdfViewerScreen(
                     }
                 }
             }
+
+            }
         }
     }
-}
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\PdfViewerViewModel.kt
 ``kotlin
@@ -8680,6 +9132,10 @@ dependencies {
     implementation(libs.androidx.paging.compose)
     implementation(libs.room.paging)
     implementation(libs.androidx.windowsizeclass)
+    implementation(libs.androidx.compose.adaptive)
+    implementation(libs.androidx.compose.adaptive.layout)
+    implementation(libs.androidx.compose.adaptive.navigation)
+
 }
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
@@ -8708,7 +9164,7 @@ hilt = "2.59.2"
 hiltNavigationCompose = "1.3.0"
 room = "2.8.4"
 ksp = "2.3.6" # Kotlin 2.3.20 ke saath strictly match kiya gaya hai
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 datastore = "1.2.1"
 navigationCompose = "2.9.8"
 coil = "3.4.0"
@@ -8721,6 +9177,7 @@ hiltWork = "1.3.0"
 biometric = "1.2.0-alpha05"
 tink = "1.21.0"
 paging = "3.5.0"
+adaptive = "1.2.0"
 
 
 [libraries]
@@ -8775,6 +9232,9 @@ androidx-paging-runtime = { group = "androidx.paging", name = "paging-runtime", 
 androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version.ref = "paging" }
 room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
 androidx-windowsizeclass = { group = "androidx.compose.material3", name = "material3-window-size-class" }
+androidx-compose-adaptive = { group = "androidx.compose.material3.adaptive", name = "adaptive", version.ref = "adaptive" }
+androidx-compose-adaptive-layout = { group = "androidx.compose.material3.adaptive", name = "adaptive-layout", version.ref = "adaptive" }
+androidx-compose-adaptive-navigation = { group = "androidx.compose.material3.adaptive", name = "adaptive-navigation", version.ref = "adaptive" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

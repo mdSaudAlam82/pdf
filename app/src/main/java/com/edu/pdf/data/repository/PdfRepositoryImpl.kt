@@ -143,24 +143,43 @@ class PdfRepositoryImpl @Inject constructor(
         return pdfDao.searchPdfsInDatabase(query).map { list -> list.map { it.toDomainModel() } }
     }
 
-    override suspend fun scanAndSavePdfs(): Unit = withContext(Dispatchers.IO) {
-        val isInitialCompleted = userPreferences.isInitialScanCompleted()
-        val lastSyncTime = if (!isInitialCompleted) 0L else userPreferences.getLastSyncTime()
-        val currentTime = System.currentTimeMillis()
+    override suspend fun scanAndSavePdfs() {
+        withContext(Dispatchers.IO) {
+            val isInitialCompleted = userPreferences.isInitialScanCompleted()
+            val lastSyncTime = if (!isInitialCompleted) 0L else userPreferences.getLastSyncTime()
+            val currentTime = System.currentTimeMillis()
 
-        deviceStorage.processDevicePdfUpdates(
-            lastSyncTime = lastSyncTime,
-            onNewPdfsBatch = { chunk ->
-                pdfDao.insertAllPdfs(chunk.map { it.toEntity().copy(virtualParentId = null, isVault = false) })
-                yield()
+            // 1. Add newly discovered files to the database
+            deviceStorage.processDevicePdfUpdates(
+                lastSyncTime = lastSyncTime,
+                onNewPdfsBatch = { chunk ->
+                    pdfDao.insertAllPdfs(chunk.map { it.toEntity().copy(virtualParentId = null, isVault = false) })
+                    yield()
+                }
+            )
+
+            // ==========================================
+            // 🌟 2026 PRO FIX: "GHOST FILE" CLEANUP
+            // ==========================================
+            // Fetch all public paths from the database to verify their existence
+            val allPublicPaths = pdfDao.getAllPublicPdfPaths()
+
+            // Filter out paths that no longer exist on the physical device
+            val stalePaths = allPublicPaths.filter { path -> !File(path).exists() }
+
+            // Gracefully remove stale paths from the database to keep the UI clean
+            if (stalePaths.isNotEmpty()) {
+                stalePaths.chunked(100).forEach { chunk ->
+                    pdfDao.deletePdfsByPaths(chunk)
+                    yield()
+                }
             }
-        )
 
-        if (!isInitialCompleted) {
-            userPreferences.setInitialScanCompleted(true)
+            if (!isInitialCompleted) {
+                userPreferences.setInitialScanCompleted(true)
+            }
+            userPreferences.updateLastSyncTime(currentTime)
         }
-        userPreferences.updateLastSyncTime(currentTime)
-        Unit
     }
 
     override suspend fun checkFileExists(fileId: String): Boolean = deviceStorage.doesFileExist(fileId)

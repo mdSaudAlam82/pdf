@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
@@ -70,7 +69,6 @@ import com.edu.pdf.presentation.folders.components.FolderMenuSheet
 import com.edu.pdf.presentation.home.components.MoveFolderListItem
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.SortBottomSheet
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -483,22 +481,14 @@ fun HomeHierarchicalMovePickerSheet(
                         )
                     }
 
-                    breadcrumbs.forEach { folder ->
-                        Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            text = folder.name,
-                            fontWeight = if (folder.folderId == currentParentId) FontWeight.Bold else FontWeight.Medium,
-                            color = if (folder.folderId == currentParentId) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clickable {
-                                    if (currentParentId != folder.folderId) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        currentParentId = folder.folderId
-                                    }
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                        )
-                    }
+                    com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                        breadcrumbs = breadcrumbs,
+                        rootName = "Home",
+                        onNavigate = { folder ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            currentParentId = folder?.folderId
+                        }
+                    )
                 }
 
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
