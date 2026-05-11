@@ -6,20 +6,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -85,26 +92,19 @@ fun UnifiedFolderOverlays(
                             context.startActivity(Intent.createChooser(intent, "Share PDF"))
                             onAction(UnifiedFolderAction.CloseSheet)
                         },
-                        onRenameConfirm = { newName ->
-                            onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.RenameDialog(item, newName)))
-                            onAction(UnifiedFolderAction.OnTextInputChange(newName))
-                            onAction(UnifiedFolderAction.ConfirmRename)
-                        },
                         onDelete = { onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DeleteConfirm(listOf(item)))) },
-                        onDetails = { onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DetailsDialog(item))) },
                         onActionClick = { actionTitle ->
                             when (actionTitle) {
-                                "Move to" -> onAction(
-                                    UnifiedFolderAction.OpenSheet(
-                                        UnifiedFolderSheetState.MovePicker(
-                                            listOf(item)
-                                        )
-                                    )
-                                )
+                                "Move to" -> onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.MovePicker(listOf(item))))
 
-                                // 🌟 WIRING: Dynamic Vault Clicks
                                 "Move to Vault", "Remove from Vault" -> {
                                     onAction(UnifiedFolderAction.ToggleVaultStatus(item.pdf))
+                                }
+
+                                // 🌟 STEP 2 FIX: Folders ke andar MVI Rename trigger
+                                "Rename" -> {
+                                    val baseName = item.pdf.name.removeSuffix(".pdf").removeSuffix(".PDF")
+                                    onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.RenameDialog(item, baseName)))
                                 }
 
                                 else -> {
@@ -133,13 +133,7 @@ fun UnifiedFolderOverlays(
         is UnifiedFolderSheetState.CreateFolderDialog -> {
             val focusRequester = remember { FocusRequester() }
             val keyboard = LocalSoftwareKeyboardController.current
-
-            LaunchedEffect(Unit) {
-                // 🌟 PRO FIX: No delay, frame ka wait karo
-                androidx.compose.runtime.withFrameNanos { }
-                focusRequester.requestFocus()
-                keyboard?.show()
-            }
+            var hasRequestedFocus by remember { mutableStateOf(false) }
 
             AlertDialog(
                 onDismissRequest = {
@@ -155,7 +149,14 @@ fun UnifiedFolderOverlays(
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(focusRequester),
+                            .focusRequester(focusRequester)
+                            .onGloballyPositioned {
+                                if (!hasRequestedFocus) {
+                                    focusRequester.requestFocus()
+                                    keyboard?.show()
+                                    hasRequestedFocus = true
+                                }
+                            },
                         shape = RoundedCornerShape(12.dp)
                     )
                 },
@@ -181,12 +182,16 @@ fun UnifiedFolderOverlays(
         is UnifiedFolderSheetState.RenameDialog -> {
             val focusRequester = remember { FocusRequester() }
             val keyboard = LocalSoftwareKeyboardController.current
+            var hasRequestedFocus by remember { mutableStateOf(false) }
 
-            LaunchedEffect(Unit) {
-                // 🌟 PRO FIX: No delay, frame ka wait karo
-                androidx.compose.runtime.withFrameNanos { }
-                focusRequester.requestFocus()
-                keyboard?.show()
+            // 🌟 WAPAS AAGAYA: Smart Auto-Select logic
+            var textFieldValue by remember {
+                mutableStateOf(
+                    androidx.compose.ui.text.input.TextFieldValue(
+                        text = state.textInput,
+                        selection = androidx.compose.ui.text.TextRange(0, state.textInput.length)
+                    )
+                )
             }
 
             AlertDialog(
@@ -197,11 +202,34 @@ fun UnifiedFolderOverlays(
                 title = { Text("Rename", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        value = state.textInput,
-                        onValueChange = { onAction(UnifiedFolderAction.OnTextInputChange(it)) },
+                        value = textFieldValue,
+                        onValueChange = {
+                            textFieldValue = it
+                            onAction(UnifiedFolderAction.OnTextInputChange(it.text))
+                        },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                        shape = RoundedCornerShape(12.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .onGloballyPositioned {
+                                if (!hasRequestedFocus) {
+                                    focusRequester.requestFocus()
+                                    keyboard?.show()
+                                    hasRequestedFocus = true
+                                }
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        // 🌟 WAPAS AAGAYA: Clear 'X' Icon
+                        trailingIcon = {
+                            if (textFieldValue.text.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue("", androidx.compose.ui.text.TextRange.Zero)
+                                    onAction(UnifiedFolderAction.OnTextInputChange(""))
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                                }
+                            }
+                        }
                     )
                 },
                 confirmButton = {
@@ -210,7 +238,7 @@ fun UnifiedFolderOverlays(
                             keyboard?.hide()
                             onAction(UnifiedFolderAction.ConfirmRename)
                         },
-                        enabled = state.textInput.trim().isNotEmpty()
+                        enabled = textFieldValue.text.trim().isNotEmpty()
                     ) { Text("Rename", fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {

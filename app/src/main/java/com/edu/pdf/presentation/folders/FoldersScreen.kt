@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -81,10 +82,45 @@ fun FoldersScreen(
     onFolderClick: (String, String) -> Unit,
     viewModel: FoldersViewModel = hiltViewModel()
 ) {
-    val folders by viewModel.deviceFolders.collectAsStateWithLifecycle()
+    // 🌟 EXACT FIX: Yahan 'viewModel.deviceFolders' ki jagah 'viewModel.uiState' se data nikalenge
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val folders = uiState.deviceFolders
+
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+
+    val activity = context.getActivity() as? FragmentActivity
+
+    val biometricPrompt = remember(activity) {
+        if (activity != null) {
+            val executor = ContextCompat.getMainExecutor(activity)
+            BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    Toast.makeText(activity, "Vault Locked: $errString", Toast.LENGTH_SHORT).show()
+                }
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    onFolderClick("vault_root", "Private Vault")
+                }
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    Toast.makeText(activity, "Fingerprint not recognized", Toast.LENGTH_SHORT).show()
+                }
+            })
+        } else null
+    }
+
+    val promptInfo = remember {
+        BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock Private Vault")
+            .setSubtitle("Use your fingerprint or device PIN")
+            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            .build()
+    }
 
     Scaffold(
         topBar = { UniversalTopBar(title = "Device Folders", scrollBehavior = scrollBehavior) },
@@ -98,33 +134,8 @@ fun FoldersScreen(
             PremiumVaultCard(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    val activity = context.getActivity() as? FragmentActivity
-                    if (activity != null) {
-                        val executor = ContextCompat.getMainExecutor(activity)
-                        val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
-                            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                                super.onAuthenticationError(errorCode, errString)
-                                Toast.makeText(activity, "Vault Locked: $errString", Toast.LENGTH_SHORT).show()
-                            }
-                            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                                super.onAuthenticationSucceeded(result)
-                                haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                onFolderClick("vault_root", "Private Vault")
-                            }
-                            override fun onAuthenticationFailed() {
-                                super.onAuthenticationFailed()
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                Toast.makeText(activity, "Fingerprint not recognized", Toast.LENGTH_SHORT).show()
-                            }
-                        })
-
-                        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                            .setTitle("Unlock Private Vault")
-                            .setSubtitle("Use your fingerprint or device PIN")
-                            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-                            .build()
-
-                        prompt.authenticate(promptInfo)
+                    if (biometricPrompt != null) {
+                        biometricPrompt.authenticate(promptInfo)
                     } else {
                         onFolderClick("vault_root", "Private Vault")
                     }
@@ -141,15 +152,24 @@ fun FoldersScreen(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
-                items(folders, key = { it.absolutePath }) { folder ->
-                    PhysicalFolderItem(
-                        folderName = folder.name,
-                        pdfCount = folder.pdfCount,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onFolderClick(folder.absolutePath, folder.name)
+                // 🌟 FIX: Loading state add kar diya taaki crash na ho
+                if (uiState.isLoading) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
                         }
-                    )
+                    }
+                } else {
+                    items(folders, key = { it.absolutePath }) { folder ->
+                        PhysicalFolderItem(
+                            folderName = folder.name,
+                            pdfCount = folder.pdfCount,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onFolderClick(folder.absolutePath, folder.name)
+                            }
+                        )
+                    }
                 }
             }
         }

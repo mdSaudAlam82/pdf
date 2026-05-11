@@ -17,6 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.edu.pdf.domain.model.HomeItem
@@ -24,6 +25,7 @@ import com.edu.pdf.presentation.home.HomeAction
 import com.edu.pdf.presentation.home.HomeSheetState
 import com.edu.pdf.presentation.home.HomeUiState
 import kotlinx.collections.immutable.PersistentSet
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,7 +35,7 @@ fun HomeContent(
     isSelectionMode: Boolean,
     selectedPdfs: PersistentSet<String>,
     paddingValues: PaddingValues,
-    pagerState: PagerState, // 🌟 ViewModel se receive kiya hua state
+    pagerState: PagerState,
     onAction: (HomeAction) -> Unit,
     onToggleSelection: (String) -> Unit,
     onSelectionModeChange: (Boolean) -> Unit
@@ -44,17 +46,23 @@ fun HomeContent(
             if (!selectedPdfs.contains(id)) onToggleSelection(id)
         }
     }
+    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { onAction(HomeAction.ImportFile(it.toString())) }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(top = paddingValues.calculateTopPadding(), bottom = paddingValues.calculateBottomPadding())) {
-
-        // 🌟 YEHAN SE 'HomeTabs' HATA DIYE GAYE HAIN KYUNKI WO UPAR SCROLL BAR ME CHIPAK GAYE HAIN
 
         if (state.breadcrumbs.isNotEmpty()) {
             com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                 breadcrumbs = state.breadcrumbs,
-                onNavigate = {
-                    // Root jane ke liye sab pop kardo
-                    while(state.breadcrumbs.isNotEmpty()) onAction(HomeAction.NavigateUp)
+                onNavigate = { targetFolder ->
+                    if (targetFolder == null) {
+                        onAction(HomeAction.NavigateToRoot)
+                    } else {
+                        onAction(HomeAction.NavigateToFolderInStack(targetFolder))
+                    }
                 }
             )
         }
@@ -62,35 +70,43 @@ fun HomeContent(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-            userScrollEnabled = !isSelectionMode && state.breadcrumbs.isEmpty()
+            userScrollEnabled = !isSelectionMode
         ) { page ->
             PullToRefreshBox(isRefreshing = isRefreshing, onRefresh = { onAction(HomeAction.RefreshData) }) {
-                val currentList = if (state.breadcrumbs.isNotEmpty()) {
-                    state.currentFolderItems
-                } else {
-                    when (page) {
-                        0 -> state.recentItems
-                        1 -> state.currentFolderItems
-                        else -> state.favoritePdfs.map { HomeItem.PdfItem(it) }
-                    }
+                val currentList = when (page) {
+                    0 -> state.recentItems
+                    1 -> state.currentFolderItems
+                    else -> state.favoritePdfs.map { HomeItem.PdfItem(it) }
                 }
 
                 if (currentList.isEmpty()) {
                     EmptyStateView(title = "No Items Here", subtitle = "Start by creating a folder or adding PDFs.")
                 } else {
+                    // 🌟 ELITE FIX: Meri wo galti theek kar di! Ab Grid aur List dono check honge
                     if (state.isGridView) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 110.dp),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 120.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
-                        ) {
-                            items(currentList, key = { it.id }) { item -> UnifiedGridItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection) }
+                        key(state.sortType) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 110.dp),
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 120.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(20.dp)
+                            ) {
+                                items(currentList, key = { it.id }) { item ->
+                                    UnifiedGridItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                }
+                            }
                         }
                     } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-                            items(currentList, key = { it.id }) { item -> UnifiedListItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection) }
+                        key(state.sortType) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 120.dp)
+                            ) {
+                                items(currentList, key = { it.id }) { item ->
+                                    UnifiedListItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                }
+                            }
                         }
                     }
                 }

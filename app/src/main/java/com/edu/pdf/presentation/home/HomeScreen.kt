@@ -8,11 +8,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,21 +15,28 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +52,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
@@ -58,25 +61,23 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavHostController
 import com.edu.pdf.domain.model.HomeItem
-import com.edu.pdf.presentation.common.PremiumBottomBar
-import com.edu.pdf.presentation.common.PremiumNavigationRail
+import com.edu.pdf.presentation.common.PremiumBottomBarItems
 import com.edu.pdf.presentation.common.UniversalTopBar
 import com.edu.pdf.presentation.folders.getActivity
-import com.edu.pdf.presentation.home.components.ActionBottomBar
+import com.edu.pdf.presentation.home.components.ActionBottomBarItems
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.coroutines.launch
 
-
 @Composable
 fun HomeScreenWrapper(
     viewModel: HomeViewModel,
     navController: NavHostController,
     onPdfClick: (String) -> Unit,
-    onSearchClick: () -> Unit,
-    onFolderClick: (String, String, com.edu.pdf.domain.model.FolderType) -> Unit = { _, _, _ -> }
+    onFolderClick: (String, String, com.edu.pdf.domain.model.FolderType) -> Unit,
+    onSearchClick: () -> Unit
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(Environment.isExternalStorageManager()) }
@@ -84,7 +85,6 @@ fun HomeScreenWrapper(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
-    // 🌟 NAYA: Ab ye data viewModel ki uiState se aa raha hai
     val isSelectionMode = uiState.isSelectionMode
     val selectedPdfs = uiState.selectedIds
 
@@ -95,21 +95,15 @@ fun HomeScreenWrapper(
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // 🌟 MVI STRICT EVENT OBSERVER: Ye background me crash nahi hone dega
     LaunchedEffect(viewModel.events, lifecycleOwner) {
-        // Ye block tabhi chalega jab screen user ko dikh rahi hogi (STARTED state)
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             viewModel.events.collect { event ->
                 when (event) {
-                    is HomeEvent.NavigateToPdf -> onPdfClick(event.path)
-                    is HomeEvent.NavigateToFolder -> {
-                        onFolderClick(
-                            event.folderId,
-                            event.folderName,
-                            com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB
-                        )
-                    }
                     is HomeEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
-                    is HomeEvent.ClearMultiSelection -> viewModel.onAction(HomeAction.SetSelectionMode(false))
+                    is HomeEvent.NavigateToPdfViewer -> onPdfClick(event.path)
+                    // 🌟 2. NAYA EVENT LISTEN KIYA
+                    is HomeEvent.NavigateToFolder -> onFolderClick(event.folderId, event.folderName, event.type)
                 }
             }
         }
@@ -121,6 +115,9 @@ fun HomeScreenWrapper(
             permissionLauncher.launch(intent)
         }
     } else {
+        LaunchedEffect(Unit) {
+            viewModel.onAction(HomeAction.Initialize)
+        }
         if (uiState.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
         } else {
@@ -131,7 +128,6 @@ fun HomeScreenWrapper(
                 selectedPdfs = selectedPdfs,
                 navController = navController,
                 onSearchClick = onSearchClick,
-                // 🌟 NAYA: Ab hum HomeAction use kar rahe hain
                 onSelectionModeChange = { enabled -> viewModel.onAction(HomeAction.SetSelectionMode(enabled)) },
                 onToggleSelection = { id -> viewModel.onAction(HomeAction.ToggleSelection(id)) },
                 onSelectAll = { ids -> viewModel.onAction(HomeAction.SelectAll(ids)) },
@@ -142,10 +138,7 @@ fun HomeScreenWrapper(
     }
 }
 
-@OptIn(
-    androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi::class,
-    androidx.compose.material3.ExperimentalMaterial3Api::class
-)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun HomeScreenPure(
     state: HomeUiState,
@@ -163,9 +156,8 @@ fun HomeScreenPure(
     var currentTab by rememberSaveable { mutableIntStateOf(1) }
     val context = LocalContext.current
 
-
     val windowSizeClass = calculateWindowSizeClass(activity = context.getActivity() ?: return)
-    val isExpandedScreen = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
+    val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     val pagerState = rememberPagerState(pageCount = { 3 }, initialPage = 1)
     val coroutineScope = rememberCoroutineScope()
@@ -183,6 +175,7 @@ fun HomeScreenPure(
         }
     }
 
+    // 🌟 EXACT FIX: Ab BackHandler sirf Selection Mode me kaam aayega!
     BackHandler(enabled = isSelectionMode) {
         onSelectAll(emptyList())
         onSelectionModeChange(false)
@@ -235,68 +228,70 @@ fun HomeScreenPure(
             }
         },
         bottomBar = {
-            // 🌟 THE ELITE FIX: Smart Bottom Bar Handling
-            // Agar Selection Mode ON hai, toh screen size chahe jo ho, ActionBar dikhao.
-            // Agar normal mode hai aur screen choti hai (Phone), toh PremiumBottomBar dikhao.
-            AnimatedContent(
-                targetState = isSelectionMode,
-                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                label = "BottomBarTransition"
-            ) { selectionMode ->
-                if (selectionMode) {
-                    val selectedIdsSet by remember(selectedPdfs) {
-                        androidx.compose.runtime.derivedStateOf { selectedPdfs.toSet() }
-                    }
-                    val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                        androidx.compose.runtime.derivedStateOf {
-                            if (selectedIdsSet.isEmpty()) emptyList()
-                            else currentTabItems.filter { it.id in selectedIdsSet }
+            if (isSelectionMode || !isTablet) {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
+                    windowInsets = WindowInsets(0.dp),
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
+                ) {
+                    androidx.compose.animation.AnimatedContent(
+                        targetState = isSelectionMode,
+                        label = "IconSwapAnimation"
+                    ) { selectionActive ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (selectionActive) {
+                                val selectedIdsSet by remember(selectedPdfs) { derivedStateOf { selectedPdfs.toSet() } }
+                                val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
+                                    derivedStateOf { if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet } }
+                                }
+
+                                ActionBottomBarItems(
+                                    selectedItems = selectedItemsList,
+                                    tabIndex = currentTab,
+                                    onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                                    onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                                    onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                                    onShare = {
+                                        val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                                        if (pdfUris.isNotEmpty()) {
+                                            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                                type = "application/pdf"
+                                                putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                                        }
+                                    },
+                                    onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                                    onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                                )
+                            } else {
+                                if (!isTablet) {
+                                    PremiumBottomBarItems(navController = navController)
+                                }
+                            }
                         }
                     }
-
-                    ActionBottomBar(
-                        selectedItems = selectedItemsList,
-                        tabIndex = currentTab,
-                        onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                        onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                        onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                        onShare = {
-                            val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                            if (pdfUris.isNotEmpty()) {
-                                val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                    type = "application/pdf"
-                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                            }
-                        },
-                        onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                        onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                    )
-                } else if (!isExpandedScreen) {
-                    PremiumBottomBar(navController = navController)
                 }
             }
         }
     ) { paddingValues ->
-        // 🌟 THE ELITE FIX: Smooth Side-by-Side UI for Tablets
         Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Agar screen badi hai (Tablet) aur user selection nahi kar raha, tab Rail dikhao
-            if (isExpandedScreen && !isSelectionMode) {
-                PremiumNavigationRail(navController = navController)
-            }
-
             HomeContent(
                 state = state,
                 isRefreshing = isRefreshing,
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
-                paddingValues = PaddingValues(0.dp), // Padding already Row par lag chuki hai
+                paddingValues = PaddingValues(0.dp),
                 pagerState = pagerState,
                 onAction = onAction,
                 onToggleSelection = onToggleSelection,
@@ -305,12 +300,13 @@ fun HomeScreenPure(
         }
     }
 }
+
 @Composable
 fun PermissionScreen(onRequestPermission: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Storage Permission Required", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("To find and display all PDFs on your device, we need \"All Files Access\".", textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Color.Gray)
+        Text("To find and display all PDFs on your device, we need \"All Files Access\".", textAlign = TextAlign.Center, color = Color.Gray)
         Spacer(modifier = Modifier.height(24.dp))
         Button(onClick = onRequestPermission) { Text("Grant Permission") }
     }

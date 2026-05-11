@@ -8,18 +8,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,6 +52,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -96,31 +95,31 @@ fun HomeOverlays(
         is HomeSheetState.CreateFolderDialog -> {
             val focusRequester = remember { FocusRequester() }
             val keyboard = LocalSoftwareKeyboardController.current
-
-            // 🌟 2026 PRO FIX: Koi delay(150) nahi! Seedha hardware frame ka wait aur turant action.
-            LaunchedEffect(Unit) {
-                // UI draw hone ka exact wait karega (No lag, No fail)
-                androidx.compose.runtime.withFrameNanos { }
-                focusRequester.requestFocus()
-                keyboard?.show()
-            }
+            var localFolderName by rememberSaveable { mutableStateOf("") }
+            var hasRequestedFocus by remember { mutableStateOf(false) }
 
             AlertDialog(
                 onDismissRequest = {
                     keyboard?.hide()
                     onAction(HomeAction.CloseSheet)
                 },
-                // ... Baaki ka tumhara AlertDialog ka code waise hi rahega ...
                 title = { Text("New Folder", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        value = state.textInput,
-                        onValueChange = { onAction(HomeAction.OnTextInputChange(it)) },
+                        value = localFolderName,
+                        onValueChange = { localFolderName = it },
                         label = { Text("Folder Name") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(focusRequester),
+                            .focusRequester(focusRequester)
+                            .onGloballyPositioned {
+                                if (!hasRequestedFocus) {
+                                    focusRequester.requestFocus()
+                                    keyboard?.show()
+                                    hasRequestedFocus = true
+                                }
+                            },
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -132,9 +131,9 @@ fun HomeOverlays(
                     Button(
                         onClick = {
                             keyboard?.hide()
-                            onAction(HomeAction.ConfirmCreateFolder)
+                            onAction(HomeAction.ConfirmCreateFolder(localFolderName))
                         },
-                        enabled = state.textInput.trim().isNotEmpty(),
+                        enabled = localFolderName.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Create", fontWeight = FontWeight.Bold) }
                 },
@@ -178,19 +177,19 @@ fun HomeOverlays(
                             context.startActivity(Intent.createChooser(intent, "Share PDF"))
                             onAction(HomeAction.CloseSheet)
                         },
-                        onRenameConfirm = { newName ->
-                            onAction(HomeAction.OnTextInputChange(newName))
-                            onAction(HomeAction.ConfirmRename)
-                        },
+                        // Deleted onRenameConfirm completely to fix the parameter error
                         onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(listOf(item)))) },
-                        onDetails = { onAction(HomeAction.OpenSheet(HomeSheetState.DetailsDialog(item))) },
                         onActionClick = { actionTitle ->
                             when (actionTitle) {
                                 "Move to" -> onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(listOf(item))))
 
-                                // 🌟 WIRING: Dynamic Vault Clicks
                                 "Move to Vault", "Remove from Vault" -> {
                                     onAction(HomeAction.ToggleVaultStatus(item.pdf))
+                                }
+
+                                "Rename" -> {
+                                    val baseName = item.pdf.name.removeSuffix(".pdf").removeSuffix(".PDF")
+                                    onAction(HomeAction.OpenSheet(HomeSheetState.RenameDialog(item, baseName)))
                                 }
 
                                 else -> {
@@ -207,11 +206,18 @@ fun HomeOverlays(
         is HomeSheetState.RenameDialog -> {
             val focusRequester = remember { FocusRequester() }
             val keyboard = LocalSoftwareKeyboardController.current
-            LaunchedEffect(Unit) {
-                androidx.compose.runtime.withFrameNanos { }
-                focusRequester.requestFocus()
-                keyboard?.show()
+            var hasRequestedFocus by remember { mutableStateOf(false) }
+
+            // 🌟 WAPAS AAGAYA: Smart Auto-Select logic
+            var textFieldValue by remember {
+                mutableStateOf(
+                    androidx.compose.ui.text.input.TextFieldValue(
+                        text = activeSheet.currentName,
+                        selection = androidx.compose.ui.text.TextRange(0, activeSheet.currentName.length)
+                    )
+                )
             }
+
             AlertDialog(
                 onDismissRequest = {
                     keyboard?.hide()
@@ -220,24 +226,43 @@ fun HomeOverlays(
                 title = { Text("Rename", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        value = state.textInput,
-                        onValueChange = { onAction(HomeAction.OnTextInputChange(it)) },
+                        value = textFieldValue,
+                        onValueChange = { textFieldValue = it },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .onGloballyPositioned {
+                                if (!hasRequestedFocus) {
+                                    focusRequester.requestFocus()
+                                    keyboard?.show()
+                                    hasRequestedFocus = true
+                                }
+                            },
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
                             cursorColor = MaterialTheme.colorScheme.primary
-                        )
+                        ),
+                        // 🌟 WAPAS AAGAYA: Clear 'X' Icon
+                        trailingIcon = {
+                            if (textFieldValue.text.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue("", androidx.compose.ui.text.TextRange.Zero)
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                                }
+                            }
+                        }
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = {
                             keyboard?.hide()
-                            onAction(HomeAction.ConfirmRename)
+                            onAction(HomeAction.ConfirmRename(textFieldValue.text))
                         },
-                        enabled = state.textInput.trim().isNotEmpty(),
+                        enabled = textFieldValue.text.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Rename", fontWeight = FontWeight.Bold) }
                 },
@@ -278,7 +303,7 @@ fun HomeOverlays(
         is HomeSheetState.MovePicker -> {
             HomeHierarchicalMovePickerSheet(
                 folders = foldersTree,
-                itemsBeingMoved = activeSheet.items, // 🌟 NAYA: Passes exactly what the user selected
+                itemsBeingMoved = activeSheet.items,
                 onDismiss = { onAction(HomeAction.CloseSheet) },
                 onFolderSelected = { targetFolderId -> onAction(HomeAction.ConfirmMove(targetFolderId)) },
                 onLocalCreateFolder = { name, parentId ->
@@ -321,6 +346,14 @@ fun HomeOverlays(
                 containerColor = MaterialTheme.colorScheme.surface
             )
         }
+        is HomeSheetState.AppPdfPicker -> {
+            com.edu.pdf.presentation.common.picker.GlobalPdfPickerSheet(
+                onDismiss = { onAction(HomeAction.CloseSheet) },
+                onPdfsSelected = { selectedIds ->
+                    onAction(HomeAction.MovePdfsToCurrentFolder(selectedIds))
+                }
+            )
+        }
     }
 }
 
@@ -346,7 +379,7 @@ fun HomeHierarchicalMovePickerSheet(
     var currentParentId by rememberSaveable { mutableStateOf<String?>(null) }
     val haptic = LocalHapticFeedback.current
 
-    // 🌟 THE ELITE FIX: Recursive filtering to prevent Cyclic Dependencies
+    // 🌟 THE ELITE FIX: Recursive filtering to prevent Cyclic Dependencies (Logic Untouched)
     val invalidFolderIds = remember(folders, itemsBeingMoved) {
         val movedFolderIds = itemsBeingMoved.filterIsInstance<HomeItem.FolderItem>().map { it.folder.folderId }
         val invalidSet = mutableSetOf<String>()
@@ -362,7 +395,6 @@ fun HomeHierarchicalMovePickerSheet(
         invalidSet
     }
 
-    // Filter current folders by removing the invalid/blacklisted folders
     val currentFolders = remember(folders, currentParentId, invalidFolderIds) {
         folders.filter { it.parentFolderId == currentParentId && !invalidFolderIds.contains(it.folderId) }
             .sortedBy { it.name.lowercase() }
@@ -383,10 +415,9 @@ fun HomeHierarchicalMovePickerSheet(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
+            decorFitsSystemWindows = false // 🌟 Edge to Edge Enabled
         )
     ) {
-        // 🌟 NATIVE BACK HANDLER FIX
         BackHandler {
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             if (currentParentId != null) {
@@ -401,107 +432,100 @@ fun HomeHierarchicalMovePickerSheet(
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shadowElevation = 1.dp
+                    color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f), // Slightly transparent top
+                    shadowElevation = 0.dp
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .systemBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface)
+                    Column(modifier = Modifier.fillMaxWidth().systemBarsPadding()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                            Text(
+                                text = "Move ${itemsBeingMoved.size} item" + if (itemsBeingMoved.size > 1) "s" else "",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f).padding(start = 8.dp)
+                            )
+                            IconButton(onClick = { showLocalNewFolderDialog = true }) {
+                                Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = MaterialTheme.colorScheme.primary)
+                            }
                         }
-                        Text(
-                            text = "Move to",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f).padding(start = 8.dp)
-                        )
-                        IconButton(onClick = { showLocalNewFolderDialog = true }) {
-                            Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = MaterialTheme.colorScheme.onSurface)
+
+                        // 🌟 Breadcrumbs Navigation Area
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .padding(bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (currentParentId == null) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent,
+                                modifier = Modifier.clickable {
+                                    if (currentParentId != null) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        currentParentId = null
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    text = "Home",
+                                    fontWeight = if (currentParentId == null) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (currentParentId == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+
+                            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                                breadcrumbs = breadcrumbs,
+                                rootName = "", // Empty to hide extra root
+                                onNavigate = { folder ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    currentParentId = folder?.folderId
+                                }
+                            )
                         }
                     }
                 }
             },
-            bottomBar = {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shadowElevation = 16.dp,
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars) // 🌟 UX FIX: Native Bar Offset
-                ) {
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onFolderSelected(currentParentId)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                            .height(54.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
-                    ) {
-                        Text("Move", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
-                    }
-                }
-            }
+            // 🌟 PRO FIX: Bottom bar hata diya! Ab button screen ke upar float karega.
+            bottomBar = {}
         ) { paddingValues ->
 
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues)
-                    .imePadding()
+                    .padding(top = paddingValues.calculateTopPadding())
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 120.dp) // Scroll button ke piche tak jayega
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (currentParentId == null) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f) else Color.Transparent,
-                        modifier = Modifier.clickable {
-                            if (currentParentId != null) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                currentParentId = null
-                            }
-                        }
-                    ) {
-                        Text(
-                            text = "Home",
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-
-                    com.edu.pdf.presentation.common.PremiumBreadcrumbs(
-                        breadcrumbs = breadcrumbs,
-                        rootName = "Home",
-                        onNavigate = { folder ->
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            currentParentId = folder?.folderId
-                        }
-                    )
-                }
-
-                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     if (currentFolders.isEmpty()) {
                         item {
                             Box(
-                                modifier = Modifier.fillMaxWidth().padding(48.dp),
+                                modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f), modifier = Modifier.size(72.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(80.dp)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), modifier = Modifier.size(40.dp))
+                                    }
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    Text("Empty folder", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("This folder is empty", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text("Tap the + icon to create a folder here", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -517,14 +541,51 @@ fun HomeHierarchicalMovePickerSheet(
                         }
                     }
                 }
+
+                // 🌟 WORLD-CLASS FLOATING BUTTON WITH BLUR/GRADIENT
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
+                                    MaterialTheme.colorScheme.background
+                                )
+                            )
+                        )
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .navigationBarsPadding() // Button safe area me rahega, gradient niche tak jayega
+                ) {
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onFolderSelected(currentParentId)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp), // Premium curve
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(
+                            text = "Move Here",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
             }
 
+            // ... Tumhara LocalNewFolderDialog ka code yahan aayega, usme koi change nahi hai ...
             if (showLocalNewFolderDialog) {
                 val focusRequester = remember { FocusRequester() }
                 val keyboard = LocalSoftwareKeyboardController.current
 
                 LaunchedEffect(Unit) {
-                    // 🌟 PRO FIX: No delay
                     androidx.compose.runtime.withFrameNanos { }
                     focusRequester.requestFocus()
                     keyboard?.show()

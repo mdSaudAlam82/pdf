@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.edu.pdf.data.security.SecurityUtils
 import com.edu.pdf.presentation.core.MainAppScreen
 import com.edu.pdf.ui.theme.PdfTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -17,9 +18,9 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 🌟 FIX: Just install it. Compose will automatically dismiss it when the first frame draws.
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        SecurityUtils.wipeVaultTempStorage(this)
         enableEdgeToEdge()
         setContent {
             PdfTheme {

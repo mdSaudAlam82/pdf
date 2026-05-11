@@ -4,20 +4,24 @@ import androidx.annotation.Keep
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 @Keep
 @Entity(
     tableName = "managed_folders",
     indices = [
-        Index(value = ["parentFolderId"]),
+        Index(value = ["absolutePath"], unique = true), // 🌟 Path unique rahega par PK nahi
+        Index(value = ["parentPath"]),
         Index(value = ["isVault"])
     ]
 )
 data class FolderEntity(
-    @PrimaryKey val folderId: String,
+    // 🌟 ELITE FIX: Ab ID primary key hai. Path change hone par bhi ye ID nahi badlegi.
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val absolutePath: String,
     val name: String,
-    val parentFolderId: String? = null,
+    val parentPath: String? = null,
     val isVault: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
-    val lastOpenedTime: Long = 0L // 🌟 NAYA: Track recent activity
+    val lastOpenedTime: Long = 0L
 )

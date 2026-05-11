@@ -6,7 +6,6 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,35 +21,28 @@ fun HomeTabs(
     selectedTabIndex: Int,
     onTabSelected: (Int) -> Unit
 ) {
+    // 🌟 Tumhara original premium Data structure with Icons & Strings
     val homeTabsList = listOf(
         Triple(stringResource(R.string.tab_recent), Icons.Default.Schedule, 0),
         Triple(stringResource(R.string.tab_all_files), Icons.Default.Description, 1),
         Triple(stringResource(R.string.tab_favorites), Icons.Default.Favorite, 2)
     )
 
-    // 🌟 FIX: Switched to standard TabRow to access tabPositions safely.
-    // Isse hum negative constraints wale Compose crash se bach jayenge.
-    TabRow(
+    // 🌟 2026 MODERN API: PrimaryTabRow (Isme negative width crash apne aap handle hota hai)
+    PrimaryTabRow(
         selectedTabIndex = selectedTabIndex,
         modifier = Modifier.fillMaxWidth().height(48.dp),
         containerColor = Color.Transparent,
         divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)) },
-        indicator = { tabPositions ->
-            if (selectedTabIndex < tabPositions.size) {
-                val currentTab = tabPositions[selectedTabIndex]
-
-                // 🌟 MILITARY GUARD: Jab tak tab ki width valid (0 se zyada) nahi hoti,
-                // tab tak indicator animate nahi karega. No negative width = No crash!
-                if (currentTab.width > 0.dp) {
-                    TabRowDefaults.SecondaryIndicator(
-                        modifier = Modifier.tabIndicatorOffset(currentTab),
-                        height = 3.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
+        indicator = {
+            // 🌟 NAYA INDICATOR: No manual math required. matchContentSize = true text ke hisaab se size set karega.
+            TabRowDefaults.PrimaryIndicator(
+                modifier = Modifier.tabIndicatorOffset(selectedTabIndex, matchContentSize = true),
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     ) {
+        // 🌟 Tumhara Original UI Design bilkul waisa hi hai
         homeTabsList.forEach { (title, icon, index) ->
             val isSelected = selectedTabIndex == index
             val tintColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant

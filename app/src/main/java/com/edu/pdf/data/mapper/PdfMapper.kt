@@ -15,7 +15,7 @@ fun PdfEntity.toDomainModel(): PdfFile {
         lastModified = lastModified,
         isFavorite = isFavorite,
         lastOpenedTime = lastOpenedTime,
-        virtualParentId = virtualParentId,
+        virtualParentId = parentPath, // 🌟 ELITE FIX: Ab parentPath hi tumhara 'virtualParentId' variable banega
         isVault = isVault
     )
 }
@@ -29,31 +29,31 @@ fun PdfFile.toEntity(): PdfEntity {
         lastModified = lastModified,
         isFavorite = isFavorite,
         lastOpenedTime = lastOpenedTime,
-        virtualParentId = virtualParentId,
+        parentPath = virtualParentId, // 🌟 UI se aane wala ID asal me Path hai
         isVault = isVault
     )
 }
 
 fun FolderEntity.toDomainModel(pdfCount: Int = 0): Folder {
     return Folder(
-        folderId = folderId,
+        folderId = absolutePath, // 🌟 ELITE FIX: UI jise 'folderId' bol raha hai, wo asal me 'absolutePath' hai
         name = name,
-        parentFolderId = parentFolderId,
+        parentFolderId = parentPath,
         isVault = isVault,
         createdAt = createdAt,
         pdfCount = pdfCount,
-        lastOpenedTime = lastOpenedTime // 🌟 NAYA: Database se UI me data bhej rahe hain
+        lastOpenedTime = lastOpenedTime
     )
 }
 
 fun FolderWithCount.toDomainModel(): Folder {
     return Folder(
-        folderId = folder.folderId,
+        folderId = folder.absolutePath,
         name = folder.name,
-        parentFolderId = folder.parentFolderId,
+        parentFolderId = folder.parentPath,
         isVault = folder.isVault,
         createdAt = folder.createdAt,
-        pdfCount = pdfCount, // 🌟 Real count from Database!
+        pdfCount = pdfCount,
         lastOpenedTime = folder.lastOpenedTime
     )
 }

@@ -7,7 +7,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,8 +63,10 @@ fun PdfViewerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? AppCompatActivity ?: return
-    val isTopBarVisible by viewModel.isTopBarVisible.collectAsStateWithLifecycle()
-    val isNightMode by viewModel.isNightMode.collectAsStateWithLifecycle()
+
+    // 🌟 EXACT FIX: MVI State Observation
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
     val pdfUri = viewModel.pdfUri
     val window = activity.window
     val insetsController = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
@@ -74,8 +75,8 @@ fun PdfViewerScreen(
     var tapJob by remember { mutableStateOf<Job?>(null) }
     val doubleTapTimeout = remember { ViewConfiguration.getDoubleTapTimeout().toLong() }
 
-    LaunchedEffect(isTopBarVisible) {
-        if (isTopBarVisible) {
+    LaunchedEffect(uiState.isTopBarVisible) {
+        if (uiState.isTopBarVisible) {
             insetsController.show(WindowInsetsCompat.Type.statusBars())
         } else {
             insetsController.hide(WindowInsetsCompat.Type.statusBars())
@@ -84,8 +85,13 @@ fun PdfViewerScreen(
     }
 
     BackHandler {
-        insetsController.show(WindowInsetsCompat.Type.statusBars())
-        onBack()
+        // 🌟 EXACT FIX: Agar search open hai, toh pehle usko band karo
+        if (uiState.isSearchActive) {
+            viewModel.onAction(PdfViewerAction.ToggleSearch)
+        } else {
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+            onBack()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -108,7 +114,7 @@ fun PdfViewerScreen(
                 .background(MaterialTheme.colorScheme.surface)
         ) {
             AnimatedVisibility(
-                visible = isTopBarVisible,
+                visible = uiState.isTopBarVisible,
                 enter = expandVertically(),
                 exit = shrinkVertically()
             ) {
@@ -131,16 +137,15 @@ fun PdfViewerScreen(
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    IconButton(onClick = { viewModel.toggleNightMode() }) {
+                    IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleNightMode) }) {
                         Icon(
-                            imageVector = if (isNightMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            imageVector = if (uiState.isNightMode) Icons.Default.LightMode else Icons.Default.DarkMode,
                             contentDescription = "Toggle Night Mode",
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    IconButton(onClick = {
-                        // Search functionality can be wired to a ViewModel state later
-                    }) {
+                    // 🌟 EXACT FIX: Button ke andar ab Action bheja gaya hai
+                    IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
                         Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
@@ -149,57 +154,72 @@ fun PdfViewerScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                            val downTime = System.currentTimeMillis()
-                            var isTap = true
-                            do {
-                                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-                                if (event.changes.size > 1) {
-                                    isTap = false
-                                    if (isTopBarVisible) viewModel.setTopBarVisible(false)
-                                }
-                                val pos = event.changes.first().position
-                                if ((pos - down.position).getDistance() > touchSlop) {
-                                    isTap = false
-                                    if (isTopBarVisible) viewModel.setTopBarVisible(false)
-                                }
-                            } while (event.changes.any { it.pressed })
-                            val upTime = System.currentTimeMillis()
-                            if (isTap && (upTime - downTime) < 200) {
-                                if (tapJob?.isActive == true) {
-                                    tapJob?.cancel()
-                                } else {
-                                    tapJob = scope.launch {
-                                        delay(doubleTapTimeout)
-                                        viewModel.toggleTopBar()
+                    // 🌟 EXACT FIX: Agar search active hai toh custom tap disable kar do, taaki keyboard aaram se chale
+                    .then(
+                        if (uiState.isSearchActive) Modifier else Modifier.pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    val downTime = System.currentTimeMillis()
+                                    var isTap = true
+
+                                    do {
+                                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        if (event.changes.size > 1) {
+                                            isTap = false
+                                            if (uiState.isTopBarVisible) viewModel.onAction(PdfViewerAction.SetTopBarVisible(false))
+                                        }
+                                        val pos = event.changes.first().position
+                                        if ((pos - down.position).getDistance() > touchSlop) {
+                                            isTap = false
+                                            if (uiState.isTopBarVisible) viewModel.onAction(PdfViewerAction.SetTopBarVisible(false))
+                                        }
+                                    } while (event.changes.any { it.pressed })
+
+                                    val upTime = System.currentTimeMillis()
+
+                                    if (isTap && (upTime - downTime) < 200) {
+                                        if (tapJob?.isActive == true) {
+                                            tapJob?.cancel()
+                                        } else {
+                                            tapJob = scope.launch {
+                                                delay(doubleTapTimeout)
+                                                viewModel.onAction(PdfViewerAction.ToggleTopBar)
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
+                    )
             ) {
                 if (pdfUri != null) {
                     AndroidFragment<PdfViewerFragment>(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
-                                if (isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix)
+                                if (uiState.isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix)
                             },
                         onUpdate = { fragment ->
                             if (fragment.documentUri != pdfUri) {
                                 fragment.documentUri = pdfUri
                             }
+                            // 🌟 EXACT FIX: Search state ko pass kiya gaya hai lifecycle safety ke sath
+                            try {
+                                if (fragment.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                                    fragment.isTextSearchActive = uiState.isSearchActive
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     )
                 } else {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("PDF load nahi ho pai", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Failed to load PDF", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-
-            }
         }
     }
+}

@@ -23,10 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.edu.pdf.domain.model.HomeItem
 import androidx.compose.ui.res.stringResource
-import com.edu.pdf.R // Isse aapka strings.xml link ho jayega
+import com.edu.pdf.R
 
 @Composable
-fun ActionBottomBar(
+fun RowScope.ActionBottomBarItems(
     selectedItems: List<HomeItem>,
     tabIndex: Int,
     onDelete: () -> Unit,
@@ -36,88 +36,64 @@ fun ActionBottomBar(
     onRemoveFromRecent: () -> Unit,
     onUnfavorite: () -> Unit
 ) {
-    // 🌟 SMART ENGINE: Checks exactly what user selected
     val folderCount = selectedItems.count { it is HomeItem.FolderItem }
     val pdfCount = selectedItems.count { it is HomeItem.PdfItem }
     val totalCount = selectedItems.size
     val hasFolderSelected = folderCount > 0
 
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        windowInsets = WindowInsets.navigationBars,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 1. DELETE
-            ActionItem(
-                title = stringResource(R.string.action_delete),
-                icon = Icons.Default.Delete,
-                enabled = totalCount > 0,
-                disabledMessage = stringResource(R.string.msg_select_delete),
-                onClick = onDelete
-            )
+    ActionItem(
+        title = stringResource(R.string.action_delete),
+        icon = Icons.Default.Delete,
+        enabled = totalCount > 0,
+        disabledMessage = stringResource(R.string.msg_select_delete),
+        onClick = onDelete
+    )
 
-            // 2. DYNAMIC TAB ACTION
-            when (tabIndex) {
-                0 -> ActionItem(
-                    title = stringResource(R.string.action_remove),
-                    icon = Icons.Default.HistoryToggleOff,
-                    enabled = totalCount > 0,
-                    disabledMessage = stringResource(R.string.msg_select_remove),
-                    onClick = onRemoveFromRecent
-                )
-                1 -> ActionItem(
-                    title = stringResource(R.string.action_move),
-                    icon = Icons.AutoMirrored.Filled.DriveFileMove,
-                    enabled = totalCount > 0,
-                    disabledMessage = stringResource(R.string.msg_select_move),
-                    onClick = onMove
-                )
-                2 -> ActionItem(
-                    title = stringResource(R.string.action_unfav),
-                    icon = Icons.Default.BookmarkRemove,
-                    enabled = totalCount > 0,
-                    disabledMessage = stringResource(R.string.msg_select_unfav),
-                    onClick = onUnfavorite
-                )
-            }
-
-            // 3. MERGE
-            val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
-            val mergeMsg = if (hasFolderSelected)
-                stringResource(R.string.msg_no_merge_folder)
-            else
-                stringResource(R.string.msg_select_2_pdf)
-
-            ActionItem(
-                title = stringResource(R.string.action_merge),
-                icon = Icons.AutoMirrored.Filled.CallMerge,
-                enabled = mergeEnabled,
-                disabledMessage = mergeMsg,
-                onClick = onMerge
-            )
-
-            // 4. SHARE
-            val shareEnabled = totalCount > 0 && !hasFolderSelected
-            val shareMsg = if (hasFolderSelected)
-                stringResource(R.string.msg_no_share_folder)
-            else
-                stringResource(R.string.msg_select_pdf_share)
-
-            ActionItem(
-                title = stringResource(R.string.action_share),
-                icon = Icons.Default.Share,
-                enabled = shareEnabled,
-                disabledMessage = shareMsg,
-                onClick = onShare
-            )
-        }
+    when (tabIndex) {
+        0 -> ActionItem(
+            title = stringResource(R.string.action_remove),
+            icon = Icons.Default.HistoryToggleOff,
+            enabled = totalCount > 0,
+            disabledMessage = stringResource(R.string.msg_select_remove),
+            onClick = onRemoveFromRecent
+        )
+        1 -> ActionItem(
+            title = stringResource(R.string.action_move),
+            icon = Icons.AutoMirrored.Filled.DriveFileMove,
+            enabled = totalCount > 0,
+            disabledMessage = stringResource(R.string.msg_select_move),
+            onClick = onMove
+        )
+        2 -> ActionItem(
+            title = stringResource(R.string.action_unfav),
+            icon = Icons.Default.BookmarkRemove,
+            enabled = totalCount > 0,
+            disabledMessage = stringResource(R.string.msg_select_unfav),
+            onClick = onUnfavorite
+        )
     }
+
+    val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
+    val mergeMsg = if (hasFolderSelected) stringResource(R.string.msg_no_merge_folder) else stringResource(R.string.msg_select_2_pdf)
+
+    ActionItem(
+        title = stringResource(R.string.action_merge),
+        icon = Icons.AutoMirrored.Filled.CallMerge,
+        enabled = mergeEnabled,
+        disabledMessage = mergeMsg,
+        onClick = onMerge
+    )
+
+    val shareEnabled = totalCount > 0 && !hasFolderSelected
+    val shareMsg = if (hasFolderSelected) stringResource(R.string.msg_no_share_folder) else stringResource(R.string.msg_select_pdf_share)
+
+    ActionItem(
+        title = stringResource(R.string.action_share),
+        icon = Icons.Default.Share,
+        enabled = shareEnabled,
+        disabledMessage = shareMsg,
+        onClick = onShare
+    )
 }
 
 @Composable
@@ -131,7 +107,6 @@ private fun RowScope.ActionItem(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
-    // 🌟 THE "COLORLESS" UX MAGIC
     val animatedColor by animateColorAsState(
         targetValue = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
         animationSpec = tween(durationMillis = 300),

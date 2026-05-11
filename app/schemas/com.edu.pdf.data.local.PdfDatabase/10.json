@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 10,
-    "identityHash": "de258e7d0d9dca4709e0f4a2fb7b7276",
+    "identityHash": "3c05f3efa20d329924184dd227770ab1",
     "entities": [
       {
         "tableName": "pdf_table",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`roomId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `id` TEXT NOT NULL, `name` TEXT NOT NULL, `path` TEXT NOT NULL, `sizeInBytes` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, `lastOpenedTime` INTEGER NOT NULL, `virtualParentId` TEXT, `isVault` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`roomId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `id` TEXT NOT NULL, `name` TEXT NOT NULL, `path` TEXT NOT NULL, `sizeInBytes` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, `lastOpenedTime` INTEGER NOT NULL, `parentPath` TEXT, `isVault` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "roomId",
@@ -57,8 +57,8 @@
             "notNull": true
           },
           {
-            "fieldPath": "virtualParentId",
-            "columnName": "virtualParentId",
+            "fieldPath": "parentPath",
+            "columnName": "parentPath",
             "affinity": "TEXT"
           },
           {
@@ -85,49 +85,22 @@
             "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_pdf_table_id` ON `${TABLE_NAME}` (`id`)"
           },
           {
-            "name": "index_pdf_table_lastOpenedTime",
-            "unique": false,
+            "name": "index_pdf_table_path",
+            "unique": true,
             "columnNames": [
-              "lastOpenedTime"
+              "path"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_lastOpenedTime` ON `${TABLE_NAME}` (`lastOpenedTime`)"
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_pdf_table_path` ON `${TABLE_NAME}` (`path`)"
           },
           {
-            "name": "index_pdf_table_isFavorite",
+            "name": "index_pdf_table_parentPath",
             "unique": false,
             "columnNames": [
-              "isFavorite"
+              "parentPath"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_isFavorite` ON `${TABLE_NAME}` (`isFavorite`)"
-          },
-          {
-            "name": "index_pdf_table_name",
-            "unique": false,
-            "columnNames": [
-              "name"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_name` ON `${TABLE_NAME}` (`name`)"
-          },
-          {
-            "name": "index_pdf_table_lastModified",
-            "unique": false,
-            "columnNames": [
-              "lastModified"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_lastModified` ON `${TABLE_NAME}` (`lastModified`)"
-          },
-          {
-            "name": "index_pdf_table_virtualParentId",
-            "unique": false,
-            "columnNames": [
-              "virtualParentId"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_virtualParentId` ON `${TABLE_NAME}` (`virtualParentId`)"
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_parentPath` ON `${TABLE_NAME}` (`parentPath`)"
           },
           {
             "name": "index_pdf_table_isVault",
@@ -137,6 +110,15 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_isVault` ON `${TABLE_NAME}` (`isVault`)"
+          },
+          {
+            "name": "index_pdf_table_lastOpenedTime",
+            "unique": false,
+            "columnNames": [
+              "lastOpenedTime"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_pdf_table_lastOpenedTime` ON `${TABLE_NAME}` (`lastOpenedTime`)"
           }
         ]
       },
@@ -199,11 +181,17 @@
       },
       {
         "tableName": "managed_folders",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`folderId` TEXT NOT NULL, `name` TEXT NOT NULL, `parentFolderId` TEXT, `isVault` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `lastOpenedTime` INTEGER NOT NULL, PRIMARY KEY(`folderId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `absolutePath` TEXT NOT NULL, `name` TEXT NOT NULL, `parentPath` TEXT, `isVault` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `lastOpenedTime` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
-            "fieldPath": "folderId",
-            "columnName": "folderId",
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "absolutePath",
+            "columnName": "absolutePath",
             "affinity": "TEXT",
             "notNull": true
           },
@@ -214,8 +202,8 @@
             "notNull": true
           },
           {
-            "fieldPath": "parentFolderId",
-            "columnName": "parentFolderId",
+            "fieldPath": "parentPath",
+            "columnName": "parentPath",
             "affinity": "TEXT"
           },
           {
@@ -240,18 +228,27 @@
         "primaryKey": {
           "autoGenerate": false,
           "columnNames": [
-            "folderId"
+            "id"
           ]
         },
         "indices": [
           {
-            "name": "index_managed_folders_parentFolderId",
-            "unique": false,
+            "name": "index_managed_folders_absolutePath",
+            "unique": true,
             "columnNames": [
-              "parentFolderId"
+              "absolutePath"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_managed_folders_parentFolderId` ON `${TABLE_NAME}` (`parentFolderId`)"
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_managed_folders_absolutePath` ON `${TABLE_NAME}` (`absolutePath`)"
+          },
+          {
+            "name": "index_managed_folders_parentPath",
+            "unique": false,
+            "columnNames": [
+              "parentPath"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_managed_folders_parentPath` ON `${TABLE_NAME}` (`parentPath`)"
           },
           {
             "name": "index_managed_folders_isVault",
@@ -267,7 +264,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'de258e7d0d9dca4709e0f4a2fb7b7276')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3c05f3efa20d329924184dd227770ab1')"
     ]
   }
 }

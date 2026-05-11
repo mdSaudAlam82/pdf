@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.core.net.toUri
+import com.edu.pdf.data.security.VaultCryptoEngine
 import com.edu.pdf.domain.model.PdfFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -13,16 +14,15 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.Paths
 import javax.inject.Inject
 import kotlin.coroutines.resume
+
 class DeviceStorageDataSource @Inject constructor(
-    @param:ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context,
+    private val cryptoEngine: VaultCryptoEngine
 ) {
     fun getPdfProRootFolder(): String {
-        val docsDir =
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+        val docsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
         val pdfProDir = File(docsDir, "PdfPro")
         if (!pdfProDir.exists()) {
             pdfProDir.mkdirs()
@@ -30,8 +30,92 @@ class DeviceStorageDataSource @Inject constructor(
         }
         return pdfProDir.absolutePath
     }
+
+    // 🌟 THE ELITE FIX: Physical Folder Creation
+    suspend fun createPhysicalFolder(name: String, parentPath: String?): String? = withContext(Dispatchers.IO) {
+        val root = parentPath ?: getPdfProRootFolder()
+        var newFolder = File(root, name)
+
+        // Name Conflict Resolution (Agar folder pehle se hai toh (1) laga dega)
+        var counter = 1
+        while (newFolder.exists()) {
+            newFolder = File(root, "$name ($counter)")
+            counter++
+        }
+
+        return@withContext if (newFolder.mkdirs()) {
+            scanFilesBatch(arrayOf(newFolder.absolutePath))
+            newFolder.absolutePath
+        } else null
+    }
+
+    // 🌟 THE ELITE FIX: Atomic Move Engine (Data corruption proof)
+    suspend fun movePhysicalFile(sourcePath: String, targetFolderPath: String): String? = withContext(Dispatchers.IO) {
+        val sourceFile = File(sourcePath)
+        if (!sourceFile.exists()) return@withContext null
+
+        val targetDir = File(targetFolderPath)
+        if (!targetDir.exists()) targetDir.mkdirs()
+
+        var targetFile = File(targetDir, sourceFile.name)
+        var counter = 1
+        while (targetFile.exists()) {
+            val nameWithoutExt = sourceFile.nameWithoutExtension
+            val ext = sourceFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
+            targetFile = File(targetDir, "$nameWithoutExt ($counter)$ext")
+            counter++
+        }
+
+        return@withContext try {
+            // 1. Copy via Stream (Safe for SD cards too)
+            sourceFile.inputStream().use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            // 2. Verify Size before deleting source
+            if (targetFile.length() == sourceFile.length()) {
+                sourceFile.delete()
+                syncWithMediaStore(sourcePath, targetFile.absolutePath)
+                targetFile.absolutePath
+            } else {
+                targetFile.delete() // Rollback
+                null
+            }
+        } catch (_: Exception) {
+            targetFile.delete() // Rollback
+            null
+        }
+    }
+
+    // 🌟 THE ELITE FIX: Deep Recursive Delete
+    suspend fun deletePhysicalPath(path: String): Boolean = withContext(Dispatchers.IO) {
+        val file = File(path)
+        if (!file.exists()) return@withContext true // Already deleted
+        val success = file.deleteRecursively()
+        if (success) syncWithMediaStore(path, null)
+        return@withContext success
+    }
+
+    suspend fun syncWithMediaStore(oldPath: String?, newPath: String?) = withContext(Dispatchers.IO) {
+        oldPath?.let { path ->
+            try {
+                context.contentResolver.delete(
+                    MediaStore.Files.getContentUri("external"),
+                    "${MediaStore.Files.FileColumns.DATA} = ?",
+                    arrayOf(path)
+                )
+            } catch (_: Exception) {}
+        }
+        val pathsToScan = listOfNotNull(oldPath, newPath).toTypedArray()
+        if (pathsToScan.isNotEmpty()) android.media.MediaScannerConnection.scanFile(
+            context, pathsToScan, null, null
+        )
+    }
+
+    // 🌟 THE ELITE FIX: Time-Trap Removed for File Manager Renames
     suspend fun processDevicePdfUpdates(
-        lastSyncTime: Long,
         onNewPdfsBatch: suspend (List<PdfFile>) -> Unit
     ) = withContext(Dispatchers.IO) {
         val collection = MediaStore.Files.getContentUri("external")
@@ -42,8 +126,10 @@ class DeviceStorageDataSource @Inject constructor(
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_MODIFIED
         )
-        val selection = "(${MediaStore.Files.FileColumns.MIME_TYPE} = ? OR ${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf') AND ${MediaStore.Files.FileColumns.DATE_MODIFIED} > ?"
-        val selectionArgs = arrayOf("application/pdf", (lastSyncTime / 1000).toString())
+
+        // 🌟 FIX: DATE_MODIFIED wali condition hata di gayi hai.
+        val selection = "${MediaStore.Files.FileColumns.MIME_TYPE} = ? OR ${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf'"
+        val selectionArgs = arrayOf("application/pdf")
 
         context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
             val tempBatch = mutableListOf<PdfFile>()
@@ -55,12 +141,26 @@ class DeviceStorageDataSource @Inject constructor(
 
             while (cursor.moveToNext()) {
                 val path = cursor.getString(dataCol) ?: continue
-                if (path.contains("/secure_vault_core/")) continue // Vault files skip karo
+
+                // Vault aur Trash ko ignore karo
+                if (path.contains("/secure_vault_core/") || path.contains("/.trash/")) continue
+
+                val file = File(path)
+                if (!file.exists()) continue // MediaStore agar purani delete hui file dikhaye toh bacha lo
 
                 val size = cursor.getLong(sizeCol)
                 if (size > 0) {
                     val uriStr = ContentUris.withAppendedId(collection, cursor.getLong(idCol)).toString()
-                    tempBatch.add(PdfFile(uriStr, cursor.getString(titleCol) ?: File(path).name, path, size, cursor.getLong(dateCol)))
+                    val parentPath = file.parentFile?.absolutePath
+
+                    tempBatch.add(PdfFile(
+                        id = uriStr,
+                        name = cursor.getString(titleCol) ?: file.name,
+                        path = path,
+                        sizeInBytes = size,
+                        lastModified = cursor.getLong(dateCol),
+                        virtualParentId = parentPath
+                    ))
                 }
 
                 if (tempBatch.size >= 200) {
@@ -73,52 +173,14 @@ class DeviceStorageDataSource @Inject constructor(
         }
     }
 
-    suspend fun movePhysicalFile(sourcePath: String, targetFolderPath: String): String? =
-        withContext(Dispatchers.IO) {
-            val sourceFile = File(sourcePath)
-            if (!sourceFile.exists()) return@withContext null
-            val targetDir = File(targetFolderPath)
-            if (!targetDir.exists()) targetDir.mkdirs()
-            var targetFile = File(targetDir, sourceFile.name)
-            var counter = 1
-            while (targetFile.exists()) {
-                val nameWithoutExt = sourceFile.nameWithoutExtension
-                val ext = sourceFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
-                targetFile = File(targetDir, "$nameWithoutExt ($counter)$ext")
-                counter++
-            }
-            return@withContext try {
-                Files.move(Paths.get(sourceFile.absolutePath), Paths.get(targetFile.absolutePath))
-                syncWithMediaStore(sourcePath, targetFile.absolutePath)
-                targetFile.absolutePath
-            } catch (_: Exception) {
-                null
-            }
-        }
-
-    suspend fun syncWithMediaStore(oldPath: String?, newPath: String?) =
-        withContext(Dispatchers.IO) {
-            oldPath?.let { path ->
-                try {
-                    context.contentResolver.delete(
-                        MediaStore.Files.getContentUri("external"),
-                        "${MediaStore.Files.FileColumns.DATA} = ?",
-                        arrayOf(path)
-                    )
-                } catch (_: Exception) {}
-            }
-            val pathsToScan = listOfNotNull(oldPath, newPath).toTypedArray()
-            if (pathsToScan.isNotEmpty()) android.media.MediaScannerConnection.scanFile(
-                context,
-                pathsToScan,
-                null,
-                null
-            )
-        }
-
-    fun doesFileExist(fileUri: String): Boolean {
+    // 🌟 THE ELITE FIX: Ab ye normal Path aur MediaStore URI dono ko samajh payega
+    fun doesFileExist(fileUriOrPath: String): Boolean {
         return try {
-            context.contentResolver.openFileDescriptor(fileUri.toUri(), "r")?.use { true } ?: false
+            if (fileUriOrPath.startsWith("content://")) {
+                context.contentResolver.openFileDescriptor(fileUriOrPath.toUri(), "r")?.use { true } ?: false
+            } else {
+                File(fileUriOrPath).exists()
+            }
         } catch (_: Exception) {
             false
         }
@@ -131,19 +193,10 @@ class DeviceStorageDataSource @Inject constructor(
 
         for (pdf in pdfs) {
             val file = File(pdf.path)
-            if (file.exists() && file.renameTo(
-                    File(
-                        trashFolder,
-                        "${System.currentTimeMillis()}_${file.name}"
-                    )
-                )
-            ) {
-                try {
-                    context.contentResolver.delete(pdf.id.toUri(), null, null)
-                } catch (_: Exception) {}
+            if (file.exists() && movePhysicalFile(pdf.path, trashFolder.absolutePath) != null) {
                 successfullyTrashedIds.add(pdf.id)
-            } else {
-                successfullyTrashedIds.add(pdf.id)
+            } else if (!file.exists()) {
+                successfullyTrashedIds.add(pdf.id) // DB Cleanup
             }
         }
         return@withContext successfullyTrashedIds
@@ -155,11 +208,7 @@ class DeviceStorageDataSource @Inject constructor(
     }
 
     @SuppressLint("UnsanitizedFilenameFromContentProvider")
-    suspend fun importFileFromUri(
-        uri: Uri,
-        isVault: Boolean,
-        targetPhysicalPath: String? = null
-    ): PdfFile? = withContext(Dispatchers.IO) {
+    suspend fun importFileFromUri(uri: Uri, isVault: Boolean, targetPhysicalPath: String? = null): PdfFile? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
         try {
             val contentResolver = context.contentResolver
@@ -196,48 +245,65 @@ class DeviceStorageDataSource @Inject constructor(
             }
 
             contentResolver.openInputStream(uri)?.use { inputStream ->
-                targetFile.outputStream().use { outputStream ->
-                    inputStream.copyTo(outputStream)
+                if (isVault) {
+                    // 🌟 NAYA: Agar Vault me import ho raha hai, toh seedha Encrypt karo!
+                    cryptoEngine.getEncryptedOutputStream(targetFile).use { encryptedOutput ->
+                        inputStream.copyTo(encryptedOutput)
+                    }
+                } else {
+                    // 🌟 NORMAL: Agar normal folder me import ho raha hai, toh normal copy karo
+                    targetFile.outputStream().use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
                 }
             }
 
             if (!isVault) {
                 val realUri = suspendCancellableCoroutine<Uri?> { cont ->
                     android.media.MediaScannerConnection.scanFile(
-                        context,
-                        arrayOf(targetFile.absolutePath),
-                        arrayOf("application/pdf")
-                    ) { _, scannedUri ->
-                        cont.resume(scannedUri)
-                    }
+                        context, arrayOf(targetFile.absolutePath), arrayOf("application/pdf")
+                    ) { _, scannedUri -> cont.resume(scannedUri) }
                 }
-
                 val finalId = realUri?.toString() ?: targetFile.absolutePath
 
                 return@withContext PdfFile(
-                    id = finalId,
-                    name = targetFile.name,
-                    path = targetFile.absolutePath,
+                    id = finalId, name = targetFile.name, path = targetFile.absolutePath,
                     sizeInBytes = if (fileSize > 0) fileSize else targetFile.length(),
-                    lastModified = System.currentTimeMillis()
+                    lastModified = System.currentTimeMillis(),
+                    virtualParentId = targetFile.parentFile?.absolutePath // 🌟 Link to correct physical folder!
                 )
             } else {
                 return@withContext PdfFile(
-                    id = targetFile.absolutePath,
-                    name = targetFile.name,
-                    path = targetFile.absolutePath,
+                    id = targetFile.absolutePath, name = targetFile.name, path = targetFile.absolutePath,
                     sizeInBytes = if (fileSize > 0) fileSize else targetFile.length(),
-                    lastModified = System.currentTimeMillis(),
-                    isVault = true
+                    lastModified = System.currentTimeMillis(), isVault = true
                 )
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            targetFile?.let { if (it.exists()) it.delete() }
-            throw e
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (_: Exception) {
             targetFile?.let { if (it.exists()) it.delete() }
             return@withContext null
         }
     }
+    fun renamePhysicalFile(oldPath: String, newName: String): String? {
+        val oldFile = File(oldPath)
+        if (!oldFile.exists()) return null
+
+        val parentDir = oldFile.parentFile ?: return null
+        val targetFile = File(parentDir, newName)
+
+        if (oldFile.name.equals(newName, ignoreCase = true) && oldFile.name != newName) {
+            // Case-only rename trick (Maths -> temp -> maths)
+            val tempFile = File(parentDir, newName + "_temp")
+            if (oldFile.renameTo(tempFile)) {
+                if (tempFile.renameTo(targetFile)) return targetFile.absolutePath
+            }
+        } else {
+            // Normal Rename (Collisions check implicitly handled by renameTo failing if exists)
+            if (!targetFile.exists() && oldFile.renameTo(targetFile)) {
+                return targetFile.absolutePath
+            }
+        }
+        return null
+    }
+
 }

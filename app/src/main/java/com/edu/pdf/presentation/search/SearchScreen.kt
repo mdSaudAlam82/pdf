@@ -34,11 +34,15 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -55,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -86,23 +91,26 @@ fun SearchScreen(
     onPdfClick: (String) -> Unit,
     viewModel: SearchViewModel = hiltViewModel()
 ) {
-    val query by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val results by viewModel.searchResults.collectAsStateWithLifecycle()
-    val history by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val query = uiState.query
+    val results = uiState.results
+    val history = uiState.history
 
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     var selectedPdfForMenu by remember { mutableStateOf<PdfFile?>(null) }
+
+    // 🌟 NAYA LOCAL STATE: Search screen me rename dialog open karne ke liye
+    var renameDialogPdf by remember { mutableStateOf<PdfFile?>(null) }
+
     val context = LocalContext.current
 
-    // 🌟 FIX: Native Cursor State Management
     var textFieldValue by remember {
         mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
     }
 
-    // Ensures cursor stays at the end when external changes happen (like clicking history)
     LaunchedEffect(query) {
         if (query != textFieldValue.text) {
             textFieldValue = TextFieldValue(text = query, selection = TextRange(query.length))
@@ -110,10 +118,9 @@ fun SearchScreen(
     }
 
     LaunchedEffect(Unit) {
-        // 🌟 PRO FIX: No delay for Search Keyboard
         androidx.compose.runtime.withFrameNanos { }
         focusRequester.requestFocus()
-        keyboardController?.show() // Yahan keyboardController use hua hai
+        keyboardController?.show()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -122,7 +129,6 @@ fun SearchScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // 🌟 Top Search Bar
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface,
@@ -139,10 +145,10 @@ fun SearchScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface)
                     }
                     TextField(
-                        value = textFieldValue, // 🌟 Using new Native TextFieldValue
+                        value = textFieldValue,
                         onValueChange = { newValue ->
                             textFieldValue = newValue
-                            viewModel.onQueryChange(newValue.text)
+                            viewModel.onAction(SearchAction.OnQueryChange(newValue.text))
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -158,13 +164,13 @@ fun SearchScreen(
                         ),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            viewModel.saveSearchQuery(textFieldValue.text)
+                            viewModel.onAction(SearchAction.SaveSearchQuery(textFieldValue.text))
                             keyboardController?.hide()
                         }),
                         trailingIcon = {
                             if (textFieldValue.text.isNotEmpty()) {
                                 IconButton(onClick = {
-                                    viewModel.clearSearch()
+                                    viewModel.onAction(SearchAction.ClearSearch)
                                     textFieldValue = TextFieldValue("", TextRange.Zero)
                                     focusRequester.requestFocus()
                                 }) {
@@ -176,13 +182,12 @@ fun SearchScreen(
                 }
             }
 
-            // 🌟 Smart Content Area
             if (textFieldValue.text.isBlank()) {
                 ZeroStateView(
                     history = history,
-                    onHistoryItemClick = { pastQuery -> viewModel.onQueryChange(pastQuery) },
-                    onRemoveHistoryItem = { viewModel.removeSearchQuery(it) },
-                    onClearAll = { viewModel.clearAllHistory() }
+                    onHistoryItemClick = { pastQuery -> viewModel.onAction(SearchAction.OnQueryChange(pastQuery)) },
+                    onRemoveHistoryItem = { viewModel.onAction(SearchAction.RemoveHistoryItem(it)) },
+                    onClearAll = { viewModel.onAction(SearchAction.ClearAllHistory) }
                 )
             } else if (results.isEmpty()) {
                 EmptyStateView(query = textFieldValue.text)
@@ -196,8 +201,8 @@ fun SearchScreen(
                             pdf = pdf,
                             query = textFieldValue.text,
                             onClick = {
-                                viewModel.saveSearchQuery(textFieldValue.text)
-                                viewModel.markPdfAsOpened(pdf.id)
+                                viewModel.onAction(SearchAction.SaveSearchQuery(textFieldValue.text))
+                                viewModel.onAction(SearchAction.MarkPdfAsOpened(pdf.id))
                                 keyboardController?.hide()
                                 onPdfClick(pdf.path)
                             },
@@ -215,13 +220,12 @@ fun SearchScreen(
             }
         }
 
-        // 🌟 Bottom Sheet
         selectedPdfForMenu?.let { pdf ->
             PdfActionBottomSheet(
                 pdf = pdf,
                 onDismiss = { selectedPdfForMenu = null },
                 onFavoriteToggle = {
-                    viewModel.toggleFavorite(pdf)
+                    viewModel.onAction(SearchAction.ToggleFavorite(pdf))
                     Toast.makeText(context, if (pdf.isFavorite) "Removed from Favorites" else "Added to Favorites", Toast.LENGTH_SHORT).show()
                     selectedPdfForMenu = null
                 },
@@ -234,22 +238,91 @@ fun SearchScreen(
                     context.startActivity(Intent.createChooser(shareIntent, "Share PDF"))
                     selectedPdfForMenu = null
                 },
-                onRenameConfirm = { newName ->
-                    viewModel.renamePdf(pdf, newName) { success ->
-                        Toast.makeText(context, if (success) "Renamed successfully" else "Rename failed", Toast.LENGTH_SHORT).show()
-                        selectedPdfForMenu = null
-                    }
-                },
                 onDelete = {
-                    viewModel.deletePdf(pdf) {
+                    viewModel.onAction(SearchAction.DeletePdf(pdf) {
                         Toast.makeText(context, "File deleted", Toast.LENGTH_SHORT).show()
                         selectedPdfForMenu = null
-                    }
+                    })
                 },
-                onDetails = {},
-                onActionClick = {
-                    Toast.makeText(context, "Coming soon!", Toast.LENGTH_SHORT).show()
-                    selectedPdfForMenu = null
+                onActionClick = { actionTitle ->
+                    when (actionTitle) {
+                        // 🌟 EXACT FIX: Rename properly wire kar diya!
+                        "Rename" -> {
+                            renameDialogPdf = pdf
+                            selectedPdfForMenu = null
+                        }
+                        else -> {
+                            Toast.makeText(context, "Coming soon!", Toast.LENGTH_SHORT).show()
+                            selectedPdfForMenu = null
+                        }
+                    }
+                }
+            )
+        }
+
+        // Smart Rename Dialog for Search Screen
+        val pdfToRename = renameDialogPdf
+        if (pdfToRename != null) {
+            val focusRequesterDialog = remember { FocusRequester() }
+            val baseName = pdfToRename.name.removeSuffix(".pdf").removeSuffix(".PDF")
+
+            // Flag to ensure focus is requested only once
+            var hasRequestedFocus by remember { mutableStateOf(false) }
+
+            var renameTextFieldValue by remember {
+                mutableStateOf(
+                    TextFieldValue(
+                        text = baseName,
+                        selection = TextRange(0, baseName.length)
+                    )
+                )
+            }
+
+            AlertDialog(
+                onDismissRequest = { renameDialogPdf = null },
+                title = { Text("Rename File", fontWeight = FontWeight.Bold) },
+                text = {
+                    OutlinedTextField(
+                        value = renameTextFieldValue,
+                        onValueChange = { renameTextFieldValue = it },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequesterDialog)
+                            .onGloballyPositioned {
+                                if (!hasRequestedFocus) {
+                                    focusRequesterDialog.requestFocus()
+                                    keyboardController?.show()
+                                    hasRequestedFocus = true
+                                }
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        trailingIcon = {
+                            if (renameTextFieldValue.text.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    renameTextFieldValue = TextFieldValue("", TextRange.Zero)
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear text")
+                                }
+                            }
+                        }
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            keyboardController?.hide()
+                            if (renameTextFieldValue.text.isNotBlank()) {
+                                viewModel.onAction(SearchAction.RenamePdf(pdfToRename, renameTextFieldValue.text) { success ->
+                                    Toast.makeText(context, if (success) "Renamed successfully" else "Rename failed", Toast.LENGTH_SHORT).show()
+                                    renameDialogPdf = null
+                                })
+                            }
+                        }
+                    ) { Text("Rename") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { renameDialogPdf = null }) { Text("Cancel") }
                 }
             )
         }
