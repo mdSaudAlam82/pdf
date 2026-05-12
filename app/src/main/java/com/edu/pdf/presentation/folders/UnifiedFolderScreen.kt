@@ -62,7 +62,6 @@ fun UnifiedFolderScreen(
     folderId: String? = null,
     folderName: String? = null,
     folderType: FolderType? = null,
-
     onBack: () -> Unit,
     onPdfClick: (String) -> Unit,
     onFolderNavigate: (String, String, FolderType) -> Unit,
@@ -70,7 +69,6 @@ fun UnifiedFolderScreen(
     viewModel: UnifiedFolderViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel()
 ) {
-
     LaunchedEffect(folderId, folderName, folderType) {
         if (folderId != null && folderName != null && folderType != null) {
             viewModel.onAction(UnifiedFolderAction.InitializeFolder(folderId, folderName, folderType))
@@ -78,7 +76,7 @@ fun UnifiedFolderScreen(
     }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val pagedPhysicalItems = viewModel.pagedPhysicalItems.collectAsLazyPagingItems()
+    val pagedPdfs = viewModel.pagedPdfsFlow.collectAsLazyPagingItems() // 🌟 ELITE FIX: Ab Physical aur Virtual dono Paged hain!
     val foldersTree by homeViewModel.foldersTree.collectAsStateWithLifecycle()
 
     val isSelectionMode = uiState.isSelectionMode
@@ -112,15 +110,13 @@ fun UnifiedFolderScreen(
         }
     }
 
-    val selectedItems by remember(uiState.items, selectedPdfs, uiState.folderType) {
+    val selectedItems by remember(uiState.folders, selectedPdfs) {
         derivedStateOf {
             if (selectedPdfs.isEmpty()) emptyList()
-            else if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
-                selectedPdfs.map { id -> HomeItem.PdfItem(PdfFile(id, "", id, 0L, 0L)) }
-            } else {
-                uiState.items.filter {
-                    val itemId = if (it is HomeItem.FolderItem) it.folder.folderId else (it as HomeItem.PdfItem).pdf.id
-                    itemId in selectedPdfs
+            else {
+                selectedPdfs.map { id ->
+                    val folder = uiState.folders.find { it.folder.folderId == id }
+                    folder ?: HomeItem.PdfItem(PdfFile(id, "", id, 0L, 0L))
                 }
             }
         }
@@ -146,24 +142,17 @@ fun UnifiedFolderScreen(
             if (isSelectionMode) {
                 SelectionTopBar(
                     selectedCount = selectedPdfs.size,
-                    totalCount = if (uiState.folderType == FolderType.PHYSICAL_DEVICE) pagedPhysicalItems.itemCount else uiState.items.size,
+                    totalCount = uiState.folders.size + pagedPdfs.itemCount, // 🌟 Clean Total Count
                     onClearSelection = { viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false)) },
                     onSelectAllToggle = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        val total = if (uiState.folderType == FolderType.PHYSICAL_DEVICE) pagedPhysicalItems.itemCount else uiState.items.size
+                        val total = uiState.folders.size + pagedPdfs.itemCount
                         if (selectedPdfs.size == total) {
                             viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
                         } else {
-                            if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
-                                val allIds = (0 until pagedPhysicalItems.itemCount).mapNotNull { index ->
-                                    val item = pagedPhysicalItems.peek(index)
-                                    if (item is HomeItem.PdfItem) item.pdf.id else if (item is HomeItem.FolderItem) item.folder.folderId else null
-                                }
-                                viewModel.onAction(UnifiedFolderAction.SelectAll(allIds))
-                            } else {
-                                val allIds = uiState.items.map { if (it is HomeItem.FolderItem) it.folder.folderId else (it as HomeItem.PdfItem).pdf.id }
-                                viewModel.onAction(UnifiedFolderAction.SelectAll(allIds))
-                            }
+                            val folderIds = uiState.folders.map { it.folder.folderId }
+                            val pdfIds = (0 until pagedPdfs.itemCount).mapNotNull { pagedPdfs.peek(it)?.pdf?.id }
+                            viewModel.onAction(UnifiedFolderAction.SelectAll(folderIds + pdfIds))
                         }
                     }
                 )
@@ -214,7 +203,7 @@ fun UnifiedFolderScreen(
                 )
             }
 
-            if (uiState.items.isEmpty() && uiState.folderType != FolderType.PHYSICAL_DEVICE && !uiState.isLoading) {
+            if (uiState.folders.isEmpty() && pagedPdfs.itemCount == 0 && !uiState.isLoading) {
                 PremiumEmptyState(
                     canImport = uiState.canImport,
                     canCreateFolder = uiState.canCreateSubFolders,
@@ -231,49 +220,30 @@ fun UnifiedFolderScreen(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
-                        if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
-                            items(
-                                count = pagedPhysicalItems.itemCount,
-                                key = pagedPhysicalItems.itemKey { item ->
-                                    when (item) {
-                                        is HomeItem.FolderItem -> item.folder.folderId
-                                        is HomeItem.PdfItem -> item.pdf.id
+                        // 🌟 STEP 1: Pehle saare Folders render karo
+                        items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
+                            UnifiedGridItem(
+                                item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                onAction = { action ->
+                                    when (action) {
+                                        is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                        else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
                                     }
-                                }
-                            ) { index ->
-                                val item = pagedPhysicalItems[index]
-                                if (item != null) {
-                                    UnifiedGridItem(
-                                        item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
-                                        onAction = { action ->
-                                            when (action) {
-                                                is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
-                                                is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
-                                                else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
-                                            }
-                                        },
-                                        onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
-                                    )
-                                }
-                            }
-                        } else {
-                            // 🌟 YAHAN TYPE INFERENCE FIX KIYA
-                            items(
-                                items = uiState.items,
-                                key = { item: HomeItem ->
-                                    when (item) {
-                                        is HomeItem.FolderItem -> item.folder.folderId
-                                        is HomeItem.PdfItem -> item.pdf.id
-                                    }
-                                }
-                            ) { item ->
+                                },
+                                onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
+                            )
+                        }
+
+                        // 🌟 STEP 2: Uske baad Paging 3 wale PDFs render karo
+                        items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
+                            val pdfItem = pagedPdfs[index]
+                            if (pdfItem != null) {
                                 UnifiedGridItem(
-                                    item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                    item = pdfItem, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
                                     onAction = { action ->
                                         when (action) {
-                                            is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
                                             is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
-                                            else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
+                                            else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
                                         }
                                     },
                                     onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
@@ -283,49 +253,30 @@ fun UnifiedFolderScreen(
                     }
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-                        if (uiState.folderType == FolderType.PHYSICAL_DEVICE) {
-                            items(
-                                count = pagedPhysicalItems.itemCount,
-                                key = pagedPhysicalItems.itemKey { item ->
-                                    when (item) {
-                                        is HomeItem.FolderItem -> item.folder.folderId
-                                        is HomeItem.PdfItem -> item.pdf.id
+                        // 🌟 STEP 1: Pehle saare Folders render karo
+                        items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
+                            UnifiedListItem(
+                                item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                onAction = { action ->
+                                    when (action) {
+                                        is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                        else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
                                     }
-                                }
-                            ) { index ->
-                                val item = pagedPhysicalItems[index]
-                                if (item != null) {
-                                    UnifiedListItem(
-                                        item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
-                                        onAction = { action ->
-                                            when (action) {
-                                                is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
-                                                is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
-                                                else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
-                                            }
-                                        },
-                                        onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
-                                    )
-                                }
-                            }
-                        } else {
-                            // 🌟 YAHAN BHI FIX KIYA
-                            items(
-                                items = uiState.items,
-                                key = { item: HomeItem ->
-                                    when (item) {
-                                        is HomeItem.FolderItem -> item.folder.folderId
-                                        is HomeItem.PdfItem -> item.pdf.id
-                                    }
-                                }
-                            ) { item ->
+                                },
+                                onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
+                            )
+                        }
+
+                        // 🌟 STEP 2: Uske baad Paging 3 wale PDFs render karo
+                        items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
+                            val pdfItem = pagedPdfs[index]
+                            if (pdfItem != null) {
                                 UnifiedListItem(
-                                    item = item, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                    item = pdfItem, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
                                     onAction = { action ->
                                         when (action) {
-                                            is HomeAction.NavigateToVirtualFolder -> onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
                                             is HomeAction.ValidateAndOpenPdf -> onPdfClick(action.pdf.path)
-                                            else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(item)))
+                                            else -> viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
                                         }
                                     },
                                     onToggleSelection = { viewModel.onAction(UnifiedFolderAction.ToggleSelection(it)) }, onLongPress = onLongPressEnableSelection
@@ -341,26 +292,12 @@ fun UnifiedFolderScreen(
 }
 
 @Composable
-fun UnifiedCustomTopBar(
-    title: String,
-    isGridView: Boolean,
-    canCreateSubFolders: Boolean,
-    onBackClick: () -> Unit,
-    onAddFolderClick: () -> Unit,
-    onSortClick: () -> Unit,
-    onToggleView: () -> Unit,
-    onSelectClick: () -> Unit
-) {
+fun UnifiedCustomTopBar(title: String, isGridView: Boolean, canCreateSubFolders: Boolean, onBackClick: () -> Unit, onAddFolderClick: () -> Unit, onSortClick: () -> Unit, onToggleView: () -> Unit, onSelectClick: () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBackClick) { Icon(Icons.Default.Close, "Close") }
             Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
-
             if (canCreateSubFolders) IconButton(onClick = onAddFolderClick) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
-
             Row {
                 IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
                 IconButton(onClick = onToggleView) { Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View") }
@@ -371,13 +308,7 @@ fun UnifiedCustomTopBar(
 }
 
 @Composable
-fun PremiumEmptyState(
-    canImport: Boolean,
-    canCreateFolder: Boolean,
-    onImportFromDeviceClick: () -> Unit,
-    onImportFromAppClick: () -> Unit,
-    onCreateFolderClick: () -> Unit
-) {
+fun PremiumEmptyState(canImport: Boolean, canCreateFolder: Boolean, onImportFromDeviceClick: () -> Unit, onImportFromAppClick: () -> Unit, onCreateFolderClick: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (canImport) {
@@ -395,9 +326,7 @@ fun PremiumEmptyState(
 private fun ProEmptyStateCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, iconTint: Color, onClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().clickable { onClick() }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp))
-            }
+            Box(modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp)) }
             Spacer(modifier = Modifier.width(16.dp))
             Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

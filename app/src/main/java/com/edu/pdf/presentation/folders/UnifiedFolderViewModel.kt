@@ -29,7 +29,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-// ... (Tumhare Purane Sealed classes aur State data classes yahan rahenge)
 sealed interface UnifiedFolderSheetState {
     data object None : UnifiedFolderSheetState
     data object SortPicker : UnifiedFolderSheetState
@@ -68,13 +67,14 @@ sealed interface UnifiedFolderAction {
     data class MovePdfsToCurrentFolder(val pdfIds: List<String>) : UnifiedFolderAction
 }
 
+// 🌟 ELITE FIX: UI State ab aur bhi clean ho gaya! Pdfs ko hata diya, ab wo Paging se aayenge
 data class UnifiedFolderUiState(
     val isLoading: Boolean = true,
     val isProcessing: Boolean = false,
     val folderType: FolderType = FolderType.PHYSICAL_DEVICE,
     val folderId: String = "",
     val folderName: String = "",
-    val items: ImmutableList<HomeItem> = persistentListOf(),
+    val folders: ImmutableList<HomeItem.FolderItem> = persistentListOf(), // 🌟 Sirf Folders yahan rahenge
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
     val isSelectionMode: Boolean = false,
     val selectedIds: PersistentSet<String> = persistentSetOf(),
@@ -115,38 +115,32 @@ class UnifiedFolderViewModel @Inject constructor(
         _currentFolderId.value = actualId
         _currentFolderName.value = decodedName
         _currentFolderType.value = type
-
         _internalState.update { it.copy(folderId = decodedId, folderName = decodedName, folderType = type) }
     }
 
-    val pagedPhysicalItems: Flow<PagingData<HomeItem>> = _currentFolderId.flatMapLatest { id ->
-        repository.getPaginatedPdfsInPhysicalFolder(id ?: "")
-            .map { pagingData -> pagingData.map { HomeItem.PdfItem(it) as HomeItem } }
-    }.cachedIn(viewModelScope)
-
-    private val physicalItemsFlow = combine(_currentFolderId, _sortType) { id, sort -> id to sort }
-        .flatMapLatest { (id, sort) ->
-            repository.getPdfsInPhysicalFolder(id ?: "").map { pdfs ->
-                pdfs.map { HomeItem.PdfItem(it) }.toImmutableList()
+    // 🌟 THE 120FPS MAGIC: Paging 3 for BOTH Physical & Managed Folders!
+    val pagedPdfsFlow: Flow<PagingData<HomeItem.PdfItem>> = combine(_currentFolderId, _currentFolderType) { id, type -> id to type }
+        .flatMapLatest { (id, type) ->
+            if (type == FolderType.PHYSICAL_DEVICE) {
+                repository.getPaginatedPdfsInPhysicalFolder(id ?: "")
+            } else {
+                repository.getPaginatedManagedPdfs(id, isVault = type == FolderType.SECURE_VAULT)
             }
-        }
+        }.map { pagingData -> pagingData.map { HomeItem.PdfItem(it) } }
+        .cachedIn(viewModelScope)
 
-    private val virtualItemsFlow = combine(_currentFolderId, _currentFolderType, _sortType) { id, type, sort -> Triple(id, type, sort) }
-        .flatMapLatest { (id, type, sort) ->
-            val isVault = type == FolderType.SECURE_VAULT
-            combine(
-                repository.getManagedFolders(id, isVault),
-                repository.getManagedPdfs(id, isVault)
-            ) { folders, pdfs ->
-                val sortedFolders = folders.sortedBy { it.name.lowercase() }.map { HomeItem.FolderItem(it) }
-                val sortedPdfs = pdfs.sortedByDescending { it.lastModified }.map { HomeItem.PdfItem(it) }
-                (sortedFolders + sortedPdfs).toImmutableList()
+    // Folders ki list (Kyunki folders 10,000 nahi hote, inhe direct rakh sakte hain)
+    private val foldersFlow = combine(_currentFolderId, _currentFolderType) { id, type -> id to type }
+        .flatMapLatest { (id, type) ->
+            if (type == FolderType.PHYSICAL_DEVICE) {
+                // 🌟 FIX: emptyList() ki jagah persistentListOf() use karein
+                flowOf(persistentListOf())
+            } else {
+                repository.getManagedFolders(id, isVault = type == FolderType.SECURE_VAULT).map { folders ->
+                    folders.sortedBy { it.name.lowercase() }.map { HomeItem.FolderItem(it) }.toImmutableList()
+                }
             }
         }.flowOn(Dispatchers.Default)
-
-    private val itemsFlow = _currentFolderType.flatMapLatest { type ->
-        if (type == FolderType.PHYSICAL_DEVICE) physicalItemsFlow else virtualItemsFlow
-    }
 
     private val breadcrumbsFlow = combine(_currentFolderId, _currentFolderName, _currentFolderType) { id, name, type -> Triple(id, name, type) }
         .flatMapLatest { (id, name, type) ->
@@ -165,27 +159,18 @@ class UnifiedFolderViewModel @Inject constructor(
             }
         }
 
-    private val prefsAndTypeFlow = combine(
-        userPreferences.isFolderGridViewFlow,
-        _sortType,
-        _currentFolderType
-    ) { isGrid, sort, type ->
-        Triple(isGrid, sort, type)
-    }
+    private val prefsAndTypeFlow = combine(userPreferences.isFolderGridViewFlow, _sortType, _currentFolderType) { isGrid, sort, type -> Triple(isGrid, sort, type) }
 
     val uiState: StateFlow<UnifiedFolderUiState> = combine(
-        itemsFlow,
-        breadcrumbsFlow,
-        prefsAndTypeFlow,
-        _internalState
-    ) { items, breadcrumbs, prefs, internal ->
+        foldersFlow, breadcrumbsFlow, prefsAndTypeFlow, _internalState
+    ) { folders, breadcrumbs, prefs, internal ->
         val (isGrid, sort, type) = prefs
         val isPhysical = type == FolderType.PHYSICAL_DEVICE
         val isVault = type == FolderType.SECURE_VAULT
 
         internal.copy(
             isLoading = false,
-            items = items,
+            folders = folders,
             breadcrumbs = breadcrumbs,
             isGridView = isGrid,
             sortType = sort,
@@ -196,7 +181,6 @@ class UnifiedFolderViewModel @Inject constructor(
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
 
     fun onAction(action: UnifiedFolderAction) {
-        // Tumhara purana onAction block yahan rahega, jisme koi Real Folder logic nahi hai.
         when (action) {
             is UnifiedFolderAction.InitializeFolder -> initFolderData(action.id, action.name, action.type)
             is UnifiedFolderAction.ToggleSelection -> {

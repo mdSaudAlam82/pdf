@@ -308,4 +308,10 @@ class PdfRepositoryImpl @Inject constructor(
                 }
         }
     }
+    override fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean): Flow<androidx.paging.PagingData<PdfFile>> {
+        return androidx.paging.Pager(
+            config = androidx.paging.PagingConfig(pageSize = 30, prefetchDistance = 15, enablePlaceholders = false),
+            pagingSourceFactory = { pdfDao.getPaginatedPdfsByParent(parentPath, isVault) }
+        ).flow.map { pagingData -> pagingData.map { it.toDomainModel() } }
+    }
 }

@@ -42,4 +42,7 @@ interface PdfRepository {
 
     fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>>
     fun getPaginatedPdfsInPhysicalFolder(folderPath: String): Flow<androidx.paging.PagingData<PdfFile>>
+
+    fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean = false): Flow<androidx.paging.PagingData<PdfFile>>
+
 }

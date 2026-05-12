@@ -118,6 +118,8 @@ interface PdfDao {
     @Query("SELECT * FROM pdf_table WHERE parentPath IS :parentPath AND isVault = :isVault ORDER BY lastModified DESC")
     fun getPdfsByParent(parentPath: String?, isVault: Boolean): Flow<List<PdfEntity>>
 
+    @Query("SELECT * FROM pdf_table WHERE parentPath IS :parentPath AND isVault = :isVault ORDER BY lastModified DESC")
+    fun getPaginatedPdfsByParent(parentPath: String?, isVault: Boolean): PagingSource<Int, PdfEntity>
     @Query("SELECT * FROM pdf_table WHERE lastOpenedTime > 0 AND isVault = 0 ORDER BY lastOpenedTime DESC LIMIT 50")
     fun getRecentPdfs(): Flow<List<PdfEntity>>
 
