@@ -59,7 +59,6 @@ import com.edu.pdf.presentation.home.components.UnifiedListItem
 
 @Composable
 fun UnifiedFolderScreen(
-    // 🌟 EXACT FIX: Ye 3 lines maine galti se delete kar di thi pichli baar!
     folderId: String? = null,
     folderName: String? = null,
     folderType: FolderType? = null,
@@ -130,13 +129,9 @@ fun UnifiedFolderScreen(
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { viewModel.onAction(UnifiedFolderAction.ImportFile(it.toString())) }
     }
-
-    // ✅ 2026 PRO FIX: Predictive Back Animation Enabled!
-    // यह BackHandler सिर्फ तभी काम करेगा जब कोई फाइल सेलेक्टेड हो (isSelectionMode == true)
     BackHandler(enabled = isSelectionMode) {
         viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
     }
-
     val onLongPressEnableSelection: (String) -> Unit = { id ->
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (!isSelectionMode) {

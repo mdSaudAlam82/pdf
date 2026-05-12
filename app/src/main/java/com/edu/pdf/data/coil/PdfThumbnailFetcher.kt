@@ -25,31 +25,41 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentLinkedQueue
 
-// 🌟 NAYA: Ye Pool hamari memory ko bachayega
 object PdfBitmapPool {
     private val pool = ConcurrentLinkedQueue<Bitmap>()
+    private const val MAX_POOL_SIZE = 20
 
     fun getBitmap(width: Int, height: Int): Bitmap {
-        // Agar purani khali memory hai (aur size match karta hai) to use saaf karke use karo
-        val existing = pool.find { it.width == width && it.height == height }
-        if (existing != null) {
-            pool.remove(existing)
-            existing.eraseColor(Color.WHITE)
-            return existing
+        val requiredBytes = width * height * 4
+
+        val reusableBitmap = pool.firstOrNull { it.allocationByteCount >= requiredBytes }
+
+        if (reusableBitmap != null) {
+            pool.remove(reusableBitmap)
+            reusableBitmap.reconfigure(width, height, Bitmap.Config.ARGB_8888)
+            reusableBitmap.eraseColor(Color.WHITE)
+            return reusableBitmap
         }
-        // Nahi toh nayi banao
+
+        // KTX function used as suggested by Android Studio
         val newBitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
         newBitmap.eraseColor(Color.WHITE)
         return newBitmap
     }
 
-    fun putBitmap(bitmap: Bitmap) {
-        // Zyada se zyada 20 Bitmap save rakho, baki aane par purane walo ko delete kar do
-        if (pool.size < 20) {
-            pool.offer(bitmap)
+    fun releaseBitmap(bitmap: Bitmap) {
+        if (pool.size < MAX_POOL_SIZE) {
+            pool.add(bitmap)
         } else {
             bitmap.recycle()
         }
+    }
+
+    // Safety function for future memory trimmings
+    @Suppress("unused")
+    fun clearPool() {
+        pool.forEach { it.recycle() }
+        pool.clear()
     }
 }
 private val renderDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(3)
@@ -124,7 +134,7 @@ class PdfThumbnailFetcher(
                 bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 85, out)
             }
             // 🌟 JADOO: Delete karne ke bajaye, memory wapas Pool me daal do!
-            PdfBitmapPool.putBitmap(bitmap)
+            PdfBitmapPool.releaseBitmap(bitmap)
 
             return@withContext SourceFetchResult(
                 source = ImageSource(
@@ -161,5 +171,3 @@ class PdfThumbnailFetcher(
         }
     }
 }
-
-// 🌟 NOTE: Tumhara purana 'object PdfRendererCache' maine yahan se poori tarah delete kar diya hai kyunki ab uski zaroorat nahi hai.

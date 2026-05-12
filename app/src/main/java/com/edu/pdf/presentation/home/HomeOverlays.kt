@@ -95,7 +95,6 @@ fun HomeOverlays(
         is HomeSheetState.CreateFolderDialog -> {
             val focusRequester = remember { FocusRequester() }
             val keyboard = LocalSoftwareKeyboardController.current
-            var localFolderName by rememberSaveable { mutableStateOf("") }
             var hasRequestedFocus by remember { mutableStateOf(false) }
 
             AlertDialog(
@@ -106,8 +105,9 @@ fun HomeOverlays(
                 title = { Text("New Folder", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        value = localFolderName,
-                        onValueChange = { localFolderName = it },
+                        // 🌟 MVI FIX: Local state हटा दिया, अब सीधा ViewModel का State यूज़ हो रहा है
+                        value = state.textInput,
+                        onValueChange = { onAction(HomeAction.OnTextInputChange(it)) },
                         label = { Text("Folder Name") },
                         singleLine = true,
                         modifier = Modifier
@@ -131,9 +131,10 @@ fun HomeOverlays(
                     Button(
                         onClick = {
                             keyboard?.hide()
-                            onAction(HomeAction.ConfirmCreateFolder(localFolderName))
+                            // 🌟 MVI FIX: Action के अंदर नाम भेजने की ज़रूरत नहीं
+                            onAction(HomeAction.ConfirmCreateFolder)
                         },
-                        enabled = localFolderName.trim().isNotEmpty(),
+                        enabled = state.textInput.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Create", fontWeight = FontWeight.Bold) }
                 },
@@ -208,16 +209,6 @@ fun HomeOverlays(
             val keyboard = LocalSoftwareKeyboardController.current
             var hasRequestedFocus by remember { mutableStateOf(false) }
 
-            // 🌟 WAPAS AAGAYA: Smart Auto-Select logic
-            var textFieldValue by remember {
-                mutableStateOf(
-                    androidx.compose.ui.text.input.TextFieldValue(
-                        text = activeSheet.currentName,
-                        selection = androidx.compose.ui.text.TextRange(0, activeSheet.currentName.length)
-                    )
-                )
-            }
-
             AlertDialog(
                 onDismissRequest = {
                     keyboard?.hide()
@@ -226,8 +217,9 @@ fun HomeOverlays(
                 title = { Text("Rename", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        value = textFieldValue,
-                        onValueChange = { textFieldValue = it },
+                        // 🌟 MVI FIX: Local State की जगह ViewModel का Text
+                        value = state.textInput,
+                        onValueChange = { onAction(HomeAction.OnTextInputChange(it)) },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -244,11 +236,11 @@ fun HomeOverlays(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
                             cursorColor = MaterialTheme.colorScheme.primary
                         ),
-                        // 🌟 WAPAS AAGAYA: Clear 'X' Icon
+                        // 🌟 MVI FIX: Clear बटन भी सिर्फ Action भेजेगा
                         trailingIcon = {
-                            if (textFieldValue.text.isNotEmpty()) {
+                            if (state.textInput.isNotEmpty()) {
                                 IconButton(onClick = {
-                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue("", androidx.compose.ui.text.TextRange.Zero)
+                                    onAction(HomeAction.OnTextInputChange(""))
                                 }) {
                                     Icon(Icons.Default.Close, contentDescription = "Clear")
                                 }
@@ -260,9 +252,10 @@ fun HomeOverlays(
                     Button(
                         onClick = {
                             keyboard?.hide()
-                            onAction(HomeAction.ConfirmRename(textFieldValue.text))
+                            // 🌟 MVI FIX: Action के अंदर नाम भेजने की ज़रूरत नहीं
+                            onAction(HomeAction.ConfirmRename)
                         },
-                        enabled = textFieldValue.text.trim().isNotEmpty(),
+                        enabled = state.textInput.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Rename", fontWeight = FontWeight.Bold) }
                 },

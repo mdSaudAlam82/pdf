@@ -54,19 +54,6 @@ fun HomeContent(
 
     Column(modifier = Modifier.fillMaxSize().padding(top = paddingValues.calculateTopPadding(), bottom = paddingValues.calculateBottomPadding())) {
 
-        if (state.breadcrumbs.isNotEmpty()) {
-            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
-                breadcrumbs = state.breadcrumbs,
-                onNavigate = { targetFolder ->
-                    if (targetFolder == null) {
-                        onAction(HomeAction.NavigateToRoot)
-                    } else {
-                        onAction(HomeAction.NavigateToFolderInStack(targetFolder))
-                    }
-                }
-            )
-        }
-
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),

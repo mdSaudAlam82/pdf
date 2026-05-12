@@ -205,8 +205,9 @@ fun HomeScreenPure(
                         }
                     )
                 } else {
+                    // 🌟 FIX: Home screen ka title hamesha 'Hi Read' rahega aur Tabs hamesha dikhenge
                     UniversalTopBar(
-                        title = if (state.breadcrumbs.isEmpty()) "Hi Read" else state.breadcrumbs.last().name,
+                        title = "Hi Read",
                         isGridView = state.isGridView,
                         onSelectAllClick = {
                             onSelectionModeChange(true)
@@ -218,12 +219,11 @@ fun HomeScreenPure(
                         onCreateFolderClick = { onAction(HomeAction.OpenSheet(HomeSheetState.CreateFolderDialog())) },
                         scrollBehavior = scrollBehavior
                     )
-                    if (state.breadcrumbs.isEmpty()) {
-                        HomeTabs(
-                            selectedTabIndex = pagerState.currentPage,
-                            onTabSelected = { index -> coroutineScope.launch { pagerState.animateScrollToPage(index) } }
-                        )
-                    }
+
+                    HomeTabs(
+                        selectedTabIndex = pagerState.currentPage,
+                        onTabSelected = { index -> coroutineScope.launch { pagerState.animateScrollToPage(index) } }
+                    )
                 }
             }
         },
