@@ -71,10 +71,10 @@ fun UnifiedFolderScreen(
     viewModel: UnifiedFolderViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel()
 ) {
-    // 🌟 EXACT FIX: Ye LaunchedEffect bhi wapas lana tha taaki PDFs load ho sakein
+
     LaunchedEffect(folderId, folderName, folderType) {
         if (folderId != null && folderName != null && folderType != null) {
-            viewModel.initFolderData(folderId, folderName, folderType)
+            viewModel.onAction(UnifiedFolderAction.InitializeFolder(folderId, folderName, folderType))
         }
     }
 
@@ -88,9 +88,6 @@ fun UnifiedFolderScreen(
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
-    // ... ISKE NEECHE TUMHARA BAAKI KA CODE WAISE HI RAHEGA ...
-    // (LaunchedEffect(viewModel.events...) se shuru hokar end tak)
 
     LaunchedEffect(viewModel.events, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

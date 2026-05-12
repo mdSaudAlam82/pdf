@@ -8337,8 +8337,10 @@ fun PdfViewerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? AppCompatActivity ?: return
-    val isTopBarVisible by viewModel.isTopBarVisible.collectAsStateWithLifecycle()
-    val isNightMode by viewModel.isNightMode.collectAsStateWithLifecycle()
+
+    // 🌟 EXACT FIX: MVI State Observation
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
     val pdfUri = viewModel.pdfUri
     val window = activity.window
     val insetsController = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
@@ -8347,8 +8349,8 @@ fun PdfViewerScreen(
     var tapJob by remember { mutableStateOf<Job?>(null) }
     val doubleTapTimeout = remember { ViewConfiguration.getDoubleTapTimeout().toLong() }
 
-    LaunchedEffect(isTopBarVisible) {
-        if (isTopBarVisible) {
+    LaunchedEffect(uiState.isTopBarVisible) {
+        if (uiState.isTopBarVisible) {
             insetsController.show(WindowInsetsCompat.Type.statusBars())
         } else {
             insetsController.hide(WindowInsetsCompat.Type.statusBars())
@@ -8357,8 +8359,13 @@ fun PdfViewerScreen(
     }
 
     BackHandler {
-        insetsController.show(WindowInsetsCompat.Type.statusBars())
-        onBack()
+        // 🌟 EXACT FIX: Agar search open hai, toh pehle usko band karo
+        if (uiState.isSearchActive) {
+            viewModel.onAction(PdfViewerAction.ToggleSearch)
+        } else {
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+            onBack()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -8381,7 +8388,7 @@ fun PdfViewerScreen(
                 .background(MaterialTheme.colorScheme.surface)
         ) {
             AnimatedVisibility(
-                visible = isTopBarVisible,
+                visible = uiState.isTopBarVisible,
                 enter = expandVertically(),
                 exit = shrinkVertically()
             ) {
@@ -8404,16 +8411,15 @@ fun PdfViewerScreen(
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    IconButton(onClick = { viewModel.toggleNightMode() }) {
+                    IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleNightMode) }) {
                         Icon(
-                            imageVector = if (isNightMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            imageVector = if (uiState.isNightMode) Icons.Default.LightMode else Icons.Default.DarkMode,
                             contentDescription = "Toggle Night Mode",
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    IconButton(onClick = {
-                        // Search functionality can be wired to a ViewModel state later
-                    }) {
+                    // 🌟 EXACT FIX: Button ke andar ab Action bheja gaya hai
+                    IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
                         Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
@@ -8422,64 +8428,63 @@ fun PdfViewerScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    // 🌟 SAFE FIX: Tumhara logic intact hai, bas modern 2026 syntax use kiya hai
-                    // aur deprecations (awaitEachGesture) hata diye hain.
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                val downTime = System.currentTimeMillis()
-                                var isTap = true
+                    // 🌟 EXACT FIX: Agar search active hai toh custom tap disable kar do, taaki keyboard aaram se chale
+                    .then(
+                        if (uiState.isSearchActive) Modifier else Modifier.pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    val downTime = System.currentTimeMillis()
+                                    var isTap = true
 
-                                do {
-                                    val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-                                    // Agar user 2 fingers se zoom kar raha hai -> Tap cancel karo
-                                    if (event.changes.size > 1) {
-                                        isTap = false
-                                        if (isTopBarVisible) viewModel.setTopBarVisible(false)
-                                    }
-                                    // Agar user scroll/swipe kar raha hai -> Tap cancel karo
-                                    val pos = event.changes.first().position
-                                    if ((pos - down.position).getDistance() > touchSlop) {
-                                        isTap = false
-                                        if (isTopBarVisible) viewModel.setTopBarVisible(false)
-                                    }
-                                } while (event.changes.any { it.pressed })
+                                    do {
+                                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        if (event.changes.size > 1) {
+                                            isTap = false
+                                            if (uiState.isTopBarVisible) viewModel.onAction(PdfViewerAction.SetTopBarVisible(false))
+                                        }
+                                        val pos = event.changes.first().position
+                                        if ((pos - down.position).getDistance() > touchSlop) {
+                                            isTap = false
+                                            if (uiState.isTopBarVisible) viewModel.onAction(PdfViewerAction.SetTopBarVisible(false))
+                                        }
+                                    } while (event.changes.any { it.pressed })
 
-                                val upTime = System.currentTimeMillis()
+                                    val upTime = System.currentTimeMillis()
 
-                                // Agar tap confirm ho gaya (200ms ke andar finger uth gayi)
-                                if (isTap && (upTime - downTime) < 200) {
-                                    if (tapJob?.isActive == true) {
-                                        // 🌟 Ye DOUBLE TAP hai!
-                                        // Job cancel karo taaki TopBar toggle na ho,
-                                        // aur PDF Fragment ko apna native double-tap-zoom karne do.
-                                        tapJob?.cancel()
-                                    } else {
-                                        // 🌟 Ye SINGLE TAP hai!
-                                        // Thoda wait karo (doubleTapTimeout) confirm karne ke liye.
-                                        tapJob = scope.launch {
-                                            delay(doubleTapTimeout)
-                                            viewModel.toggleTopBar()
+                                    if (isTap && (upTime - downTime) < 200) {
+                                        if (tapJob?.isActive == true) {
+                                            tapJob?.cancel()
+                                        } else {
+                                            tapJob = scope.launch {
+                                                delay(doubleTapTimeout)
+                                                viewModel.onAction(PdfViewerAction.ToggleTopBar)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
+                    )
             ) {
-                // 🛑 FRAGMENT BOUNDARY - Do Not Touch!
-                // Yahan tumhara banaya hua AndroidFragment waisa hi rahega.
                 if (pdfUri != null) {
                     AndroidFragment<PdfViewerFragment>(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
-                                if (isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix)
+                                if (uiState.isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix)
                             },
                         onUpdate = { fragment ->
                             if (fragment.documentUri != pdfUri) {
                                 fragment.documentUri = pdfUri
+                            }
+                            // 🌟 EXACT FIX: Search state ko pass kiya gaya hai lifecycle safety ke sath
+                            try {
+                                if (fragment.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                                    fragment.isTextSearchActive = uiState.isSearchActive
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
                             }
                         }
                     )
@@ -8489,10 +8494,9 @@ fun PdfViewerScreen(
                     }
                 }
             }
-
-            }
         }
     }
+}
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\PdfViewerViewModel.kt
 ``kotlin
@@ -8504,30 +8508,57 @@ import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.io.File
 import javax.inject.Inject
 import androidx.core.net.toUri
+
+// 🌟 1. STRICT MVI: State (Single Source of Truth)
+// Future me Gemini AI aur Scanner ki saari states yahin aayengi!
+data class PdfViewerUiState(
+    val isTopBarVisible: Boolean = true,
+    val isNightMode: Boolean = false,
+    val isSearchActive: Boolean = false // 🌟 NAYA: Find in page ke liye
+)
+
+// 🌟 2. STRICT MVI: Actions (Intents from UI)
+sealed interface PdfViewerAction {
+    data class SetTopBarVisible(val visible: Boolean) : PdfViewerAction
+    data object ToggleTopBar : PdfViewerAction
+    data object ToggleNightMode : PdfViewerAction
+    data object ToggleSearch : PdfViewerAction
+}
 
 @HiltViewModel
 class PdfViewerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
     val pdfUri: Uri? = savedStateHandle.get<String>("pdfPath")?.let(fun(path: String): Uri? {
-        return if (path.startsWith("content://") || path.startsWith("file://")) path.toUri() else Uri.fromFile(
-            File(path)
-        )
+        return if (path.startsWith("content://") || path.startsWith("file://")) path.toUri() else Uri.fromFile(File(path))
     })
-    private val _isTopBarVisible = MutableStateFlow(true)
-    val isTopBarVisible = _isTopBarVisible.asStateFlow()
-    private val _isNightMode = MutableStateFlow(false)
-    val isNightMode = _isNightMode.asStateFlow()
-    fun setTopBarVisible(visible: Boolean) {
-        if (_isTopBarVisible.value != visible) {
-            _isTopBarVisible.value = visible
+
+    // 🌟 3. STRICT MVI: State Flow
+    private val _uiState = MutableStateFlow(PdfViewerUiState())
+    val uiState = _uiState.asStateFlow()
+
+    // 🌟 4. STRICT MVI: Reducer (Brain of the ViewModel)
+    fun onAction(action: PdfViewerAction) {
+        when (action) {
+            is PdfViewerAction.SetTopBarVisible -> {
+                _uiState.update { it.copy(isTopBarVisible = action.visible) }
+            }
+            is PdfViewerAction.ToggleTopBar -> {
+                _uiState.update { it.copy(isTopBarVisible = !it.isTopBarVisible) }
+            }
+            is PdfViewerAction.ToggleNightMode -> {
+                _uiState.update { it.copy(isNightMode = !it.isNightMode) }
+            }
+            is PdfViewerAction.ToggleSearch -> {
+                _uiState.update { it.copy(isSearchActive = !it.isSearchActive) }
+            }
         }
     }
-    fun toggleTopBar() { _isTopBarVisible.value = !_isTopBarVisible.value }
-    fun toggleNightMode() { _isNightMode.value = !_isNightMode.value }
 }
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\search\SearchScreen.kt

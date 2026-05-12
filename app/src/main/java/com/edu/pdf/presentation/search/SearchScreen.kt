@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +74,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.LottieConstants
@@ -106,6 +108,20 @@ fun SearchScreen(
     var renameDialogPdf by remember { mutableStateOf<PdfFile?>(null) }
 
     val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+
+    // 🌟 MVI FIX: ViewModel के Events को सुनना
+    LaunchedEffect(viewModel.events, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is SearchEvent.ShowSnackbar -> {
+                        Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
 
     var textFieldValue by remember {
         mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
@@ -239,10 +255,9 @@ fun SearchScreen(
                     selectedPdfForMenu = null
                 },
                 onDelete = {
-                    viewModel.onAction(SearchAction.DeletePdf(pdf) {
-                        Toast.makeText(context, "File deleted", Toast.LENGTH_SHORT).show()
-                        selectedPdfForMenu = null
-                    })
+                    // 🌟 MVI FIX: सीधा डिलीट मत करो, पहले कन्फर्मेशन पॉप-अप खोलो
+                    viewModel.onAction(SearchAction.ShowDeleteConfirmation(pdf))
+                    selectedPdfForMenu = null
                 },
                 onActionClick = { actionTitle ->
                     when (actionTitle) {
@@ -313,10 +328,9 @@ fun SearchScreen(
                         onClick = {
                             keyboardController?.hide()
                             if (renameTextFieldValue.text.isNotBlank()) {
-                                viewModel.onAction(SearchAction.RenamePdf(pdfToRename, renameTextFieldValue.text) { success ->
-                                    Toast.makeText(context, if (success) "Renamed successfully" else "Rename failed", Toast.LENGTH_SHORT).show()
-                                    renameDialogPdf = null
-                                })
+                                // 🌟 MVI FIX: सिर्फ Action भेजो और डायलॉग बंद कर दो
+                                viewModel.onAction(SearchAction.RenamePdf(pdfToRename, renameTextFieldValue.text))
+                                renameDialogPdf = null
                             }
                         }
                     ) { Text("Rename") }
@@ -324,6 +338,33 @@ fun SearchScreen(
                 dismissButton = {
                     TextButton(onClick = { renameDialogPdf = null }) { Text("Cancel") }
                 }
+            )
+
+        }
+        // 🌟 MVI FIX: Delete Confirmation Dialog
+        val pdfToDelete = uiState.pdfToDelete
+        if (pdfToDelete != null) {
+            AlertDialog(
+                onDismissRequest = { viewModel.onAction(SearchAction.DismissDeleteConfirmation) },
+                title = { Text("Delete File?", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
+                text = {
+                    Text(
+                        "Are you sure you want to permanently delete '${pdfToDelete.name}'? This action cannot be undone.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.onAction(SearchAction.ConfirmDeletePdf) },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Delete", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.onAction(SearchAction.DismissDeleteConfirmation) }) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface
             )
         }
     }

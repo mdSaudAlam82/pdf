@@ -13,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 // 🌟 STRICT MVI: State Definition
@@ -20,7 +21,8 @@ data class SearchUiState(
     val query: String = "",
     val results: ImmutableList<PdfFile> = persistentListOf(),
     val history: ImmutableList<String> = persistentListOf(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val pdfToDelete: PdfFile? = null
 )
 
 // 🌟 STRICT MVI: Actions (Intents from UI)
@@ -32,8 +34,16 @@ sealed interface SearchAction {
     data object ClearAllHistory : SearchAction
     data class MarkPdfAsOpened(val pdfId: String) : SearchAction
     data class ToggleFavorite(val pdf: PdfFile) : SearchAction
-    data class RenamePdf(val pdf: PdfFile, val newName: String, val onResult: (Boolean) -> Unit) : SearchAction
-    data class DeletePdf(val pdf: PdfFile, val onComplete: () -> Unit) : SearchAction
+    // 🌟 MVI FIX: Callbacks हटा दिए गए हैं
+    data class RenamePdf(val pdf: PdfFile, val newName: String) : SearchAction
+    data class ShowDeleteConfirmation(val pdf: PdfFile) : SearchAction
+    data object DismissDeleteConfirmation : SearchAction
+    data object ConfirmDeletePdf : SearchAction
+}
+
+// 🌟 MVI EVENT: ViewModel से UI को मैसेज (Toast) भेजने के लिए
+sealed interface SearchEvent {
+    data class ShowSnackbar(val message: String) : SearchEvent
 }
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -43,6 +53,9 @@ class SearchViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
+    private val _pdfToDelete = MutableStateFlow<PdfFile?>(null)
+    private val _events = kotlinx.coroutines.channels.Channel<SearchEvent>()
+    val events = _events.receiveAsFlow()
 
     // 🌟 RE-ENGINEERED FLOWS FOR STRICT MVI STATE
     private val searchResultsFlow = _searchQuery
@@ -64,13 +77,15 @@ class SearchViewModel @Inject constructor(
     val uiState: StateFlow<SearchUiState> = combine(
         _searchQuery,
         searchResultsFlow,
-        searchHistoryFlow
-    ) { query, results, history ->
+        searchHistoryFlow,
+        _pdfToDelete
+    ) { query, results, history, pdfToDelete ->
         SearchUiState(
             query = query,
             results = results,
             history = history,
-            isLoading = false
+            isLoading = false,
+            pdfToDelete = pdfToDelete
         )
     }.stateIn(
         scope = viewModelScope,
@@ -105,12 +120,31 @@ class SearchViewModel @Inject constructor(
                 viewModelScope.launch { repository.toggleFavorite(action.pdf.id, !action.pdf.isFavorite) }
             }
             is SearchAction.RenamePdf -> {
-                viewModelScope.launch { action.onResult(repository.renamePdf(action.pdf, action.newName)) }
+                // 🌟 MVI FIX: Action लेकर Event वापस भेजना
+                viewModelScope.launch(Dispatchers.IO) {
+                    val success = repository.renamePdf(action.pdf, action.newName)
+                    withContext(Dispatchers.Main) {
+                        val msg = if (success) "Renamed successfully" else "Rename failed"
+                        _events.send(SearchEvent.ShowSnackbar(msg))
+                    }
+                }
             }
-            is SearchAction.DeletePdf -> {
-                viewModelScope.launch {
-                    repository.deletePdfs(listOf(action.pdf))
-                    action.onComplete()
+            is SearchAction.ShowDeleteConfirmation -> {
+                _pdfToDelete.value = action.pdf
+            }
+            is SearchAction.DismissDeleteConfirmation -> {
+                _pdfToDelete.value = null
+            }
+            is SearchAction.ConfirmDeletePdf -> {
+                val targetPdf = _pdfToDelete.value
+                if (targetPdf != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        repository.deletePdfs(listOf(targetPdf))
+                        withContext(Dispatchers.Main) {
+                            _pdfToDelete.value = null // पॉप-अप बंद करो
+                            _events.send(SearchEvent.ShowSnackbar("File deleted permanently"))
+                        }
+                    }
                 }
             }
         }

@@ -48,6 +48,7 @@ sealed interface UnifiedFolderEvent {
 }
 
 sealed interface UnifiedFolderAction {
+    data class InitializeFolder(val id: String, val name: String, val type: FolderType) : UnifiedFolderAction
     data class ToggleSelection(val id: String) : UnifiedFolderAction
     data class SetSelectionMode(val enabled: Boolean) : UnifiedFolderAction
     data class SelectAll(val ids: List<String>) : UnifiedFolderAction
@@ -106,7 +107,7 @@ class UnifiedFolderViewModel @Inject constructor(
     private val _sortType = MutableStateFlow(SortType.DATE_DESC)
     private val _internalState = MutableStateFlow(UnifiedFolderUiState())
 
-    fun initFolderData(id: String, name: String, type: FolderType) {
+    private fun initFolderData(id: String, name: String, type: FolderType) {
         val decodedId = android.net.Uri.decode(id)
         val decodedName = android.net.Uri.decode(name)
         val actualId = if (decodedId.isBlank() || decodedId == "root") null else decodedId
@@ -197,6 +198,7 @@ class UnifiedFolderViewModel @Inject constructor(
     fun onAction(action: UnifiedFolderAction) {
         // Tumhara purana onAction block yahan rahega, jisme koi Real Folder logic nahi hai.
         when (action) {
+            is UnifiedFolderAction.InitializeFolder -> initFolderData(action.id, action.name, action.type)
             is UnifiedFolderAction.ToggleSelection -> {
                 val currentSelected = _internalState.value.selectedIds
                 val newSelection = if (currentSelected.contains(action.id)) currentSelected.remove(action.id) else currentSelected.add(action.id)
