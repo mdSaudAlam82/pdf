@@ -65,9 +65,10 @@ fun PdfViewerScreen(
     val activity = context as? AppCompatActivity ?: return
 
     // 🌟 EXACT FIX: MVI State Observation
+    // 🌟 EXACT FIX: MVI State Observation
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    val pdfUri = viewModel.pdfUri
+    val pdfUri = uiState.pdfUri // 🌟 NAYA: Ab ye uiState se aa raha hai
     val window = activity.window
     val insetsController = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
     val touchSlop = remember { ViewConfiguration.get(context).scaledTouchSlop }

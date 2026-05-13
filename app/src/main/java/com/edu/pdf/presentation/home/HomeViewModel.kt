@@ -20,24 +20,27 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.map
+import androidx.paging.cachedIn
+import androidx.paging.map
 
 sealed interface HomeSheetState {
     data object None : HomeSheetState
@@ -60,10 +63,12 @@ sealed interface HomeEvent {
 // 🌟 FIX: textInput wapas aa gaya aur navigation stack hamesha ke liye gayab hai!
 data class HomeUiState(
     val isLoading: Boolean = true,
-    val textInput: String = "", // 🌟 MVI FIX
+    val textInput: String = "",
     val recentItems: ImmutableList<HomeItem> = persistentListOf(),
-    val currentFolderItems: ImmutableList<HomeItem> = persistentListOf(),
+    val currentFolders: ImmutableList<HomeItem.FolderItem> = persistentListOf(),
     val favoritePdfs: ImmutableList<PdfFile> = persistentListOf(),
+    val foldersTree: ImmutableList<Folder> = persistentListOf(), // 🌟 NAYA: Folders tree ab state ke andar
+    val isRefreshing: Boolean = false, // 🌟 NAYA: Refreshing ab state ke andar
     val isSelectionMode: Boolean = false,
     val selectedIds: PersistentSet<String> = persistentSetOf(),
     val isGridView: Boolean = false,
@@ -84,9 +89,9 @@ sealed interface HomeAction {
 
     // 🌟 MVI FIX: UI ab Action ke sath Text nahi bhejega
     data class OnTextInputChange(val text: String) : HomeAction
-    data object ConfirmCreateFolder : HomeAction // 🌟 data object
-    data object ConfirmRename : HomeAction       // 🌟 data object
-    data object ConfirmDelete : HomeAction       // 🌟 data object
+    data class ConfirmCreateFolder(val folderName: String) : HomeAction
+    data class ConfirmRename(val item: HomeItem, val newName: String) : HomeAction
+    data class ConfirmDelete(val items: List<HomeItem>) : HomeAction
 
     data class ConfirmMove(val targetFolderId: String?) : HomeAction
     data class UpdateSortType(val type: SortType) : HomeAction
@@ -115,44 +120,26 @@ class HomeViewModel @Inject constructor(
 
     private val _sortType = MutableStateFlow(SortType.DATE_DESC)
     private val _isRefreshing = MutableStateFlow(false)
-    val isRefreshing = _isRefreshing.asStateFlow()
 
     private val _internalState = MutableStateFlow(HomeUiState(isLoading = true, activeSheetState = HomeSheetState.None))
     private var hasInitialized = false
 
-    private val unifiedItemsFlow = _sortType.flatMapLatest { sort ->
-        val foldersFlow = repository.getManagedFolders(null, isVault = false)
-        val pdfsFlow = repository.getAllPdfs(sort)
+    // FILE: com/edu/pdf/presentation/home/HomeViewModel.kt
+// लाइन नंबर 80 के आस-पास 'unifiedItemsFlow' को इस तरह अपडेट करें:
 
-        combine(foldersFlow, pdfsFlow) { folders, pdfs ->
-            val folderComparator = Comparator<Folder> { f1, f2 ->
-                when (sort) {
-                    SortType.NAME_ASC -> f1.name.compareTo(f2.name, ignoreCase = true)
-                    SortType.NAME_DESC -> f2.name.compareTo(f1.name, ignoreCase = true)
-                    SortType.DATE_ASC -> f1.createdAt.compareTo(f2.createdAt)
-                    SortType.DATE_DESC -> f2.createdAt.compareTo(f1.createdAt)
-                    SortType.SIZE_ASC -> f1.pdfCount.compareTo(f2.pdfCount)
-                    SortType.SIZE_DESC -> f2.pdfCount.compareTo(f1.pdfCount)
-                }
-            }
-            val pdfComparator = Comparator<PdfFile> { p1, p2 ->
-                when (sort) {
-                    SortType.NAME_ASC -> p1.name.compareTo(p2.name, ignoreCase = true)
-                    SortType.NAME_DESC -> p2.name.compareTo(p1.name, ignoreCase = true)
-                    SortType.DATE_ASC -> p1.lastModified.compareTo(p2.lastModified)
-                    SortType.DATE_DESC -> p2.lastModified.compareTo(p1.lastModified)
-                    SortType.SIZE_ASC -> p1.sizeInBytes.compareTo(p2.sizeInBytes)
-                    SortType.SIZE_DESC -> p2.sizeInBytes.compareTo(p1.sizeInBytes)
-                }
-            }
-            val sortedFolders = folders.sortedWith(folderComparator).map { HomeItem.FolderItem(it) }
-            val sortedPdfs = pdfs.sortedWith(pdfComparator).map { HomeItem.PdfItem(it) }
-            (sortedFolders + sortedPdfs).toImmutableList()
+    // 1. Sirf Folders ke liye Flow
+    private val currentFoldersFlow = _sortType.flatMapLatest { sort ->
+        repository.getManagedFolders(null, isVault = false).map { folders ->
+            folders.map { HomeItem.FolderItem(it) }.toImmutableList()
         }
     }.flowOn(Dispatchers.Default)
 
-    val foldersTree: StateFlow<List<Folder>> = repository.getAllManagedFolders(isVault = false)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // 2. PDFs ke liye Paging Flow (Strict MVI - UI logic se alag)
+    val pagedUncategorizedPdfsFlow = _sortType.flatMapLatest { sort ->
+        repository.getAllPdfsPaged(sort).map { pagingData ->
+            pagingData.map { HomeItem.PdfItem(it) }
+        }
+    }.cachedIn(viewModelScope)
 
     private val favoritePdfsFlow = _sortType.flatMapLatest { sort -> repository.getFavoritePdfs(sort) }
 
@@ -164,17 +151,32 @@ class HomeViewModel @Inject constructor(
             .take(50)
     }
 
-    private val uiDataFlow = combine(recentItemsFlow, unifiedItemsFlow, favoritePdfsFlow) { recent, unified, favs -> Triple(recent, unified, favs) }
-    private val prefDataFlow = combine(userPreferences.isGridViewFlow, _sortType) { isGrid, sort -> Pair(isGrid, sort) }
+    // 🌟 FIX: Data flows ko Triple mein group kar diya taaki 5-flow limit cross na ho
+    // 🌟 FIX: unifiedItemsFlow ki jagah ab currentFoldersFlow aayega
+    private val uiDataFlow = combine(recentItemsFlow, currentFoldersFlow, favoritePdfsFlow) { recent, folders, favs ->
+        Triple(recent, folders, favs)
+    }
 
-    val uiState: StateFlow<HomeUiState> = combine(uiDataFlow, prefDataFlow, _internalState) { uiData, prefData, internal ->
+    private val prefDataFlow = combine(userPreferences.isGridViewFlow, _sortType, _isRefreshing) { isGrid, sort, refreshing ->
+        Triple(isGrid, sort, refreshing)
+    }
+
+    // Ab hum sirf 4 chizein combine kar rahe hain: uiData, prefData, tree, internal
+    val uiState: StateFlow<HomeUiState> = combine(
+        uiDataFlow,
+        prefDataFlow,
+        repository.getAllManagedFolders(isVault = false),
+        _internalState
+    ) { uiData, prefData, tree, internal ->
         internal.copy(
             isLoading = false,
             recentItems = uiData.first.toImmutableList(),
-            currentFolderItems = uiData.second,
+            currentFolders = uiData.second,
             favoritePdfs = uiData.third.toImmutableList(),
+            foldersTree = tree.toImmutableList(),
             isGridView = prefData.first,
-            sortType = prefData.second
+            sortType = prefData.second,
+            isRefreshing = prefData.third
         )
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
@@ -210,7 +212,7 @@ class HomeViewModel @Inject constructor(
             is HomeAction.UpdateSortType -> { _sortType.value = action.type; onAction(HomeAction.CloseSheet) }
 
             is HomeAction.ConfirmCreateFolder -> {
-                val folderName = _internalState.value.textInput.trim()
+                val folderName = action.folderName.trim() // 🌟 अब डेटा सीधे action से आ रहा है
                 if (folderName.isNotBlank()) {
                     _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                     viewModelScope.launch(Dispatchers.IO) {
@@ -223,12 +225,11 @@ class HomeViewModel @Inject constructor(
                 }
             }
             is HomeAction.ConfirmRename -> {
-                val state = _internalState.value.activeSheetState as? HomeSheetState.RenameDialog ?: return
-                val newName = _internalState.value.textInput.trim()
+                val newName = action.newName.trim() // 🌟 अब डेटा सीधे action से आ रहा है
                 if (newName.isNotBlank()) {
                     _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                     viewModelScope.launch(Dispatchers.IO) {
-                        when (val item = state.item) {
+                        when (val item = action.item) {
                             is HomeItem.FolderItem -> repository.renameManagedFolder(item.folder.folderId, newName)
                             is HomeItem.PdfItem -> renamePdfUseCase(item.pdf, newName)
                         }
@@ -237,13 +238,15 @@ class HomeViewModel @Inject constructor(
                 }
             }
             is HomeAction.ConfirmDelete -> {
-                val state = _internalState.value.activeSheetState as? HomeSheetState.DeleteConfirm ?: return
+                val itemsToDelete = action.items // 🌟 अब डेटा सीधे action से आ रहा है
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val foldersToDelete = state.items.filterIsInstance<HomeItem.FolderItem>()
-                    val pdfsToDelete = state.items.filterIsInstance<HomeItem.PdfItem>().map { it.pdf }
+                    val foldersToDelete = itemsToDelete.filterIsInstance<HomeItem.FolderItem>()
+                    val pdfsToDelete = itemsToDelete.filterIsInstance<HomeItem.PdfItem>().map { it.pdf }
+
                     foldersToDelete.forEach { repository.deleteManagedFolder(it.folder.folderId) }
                     if (pdfsToDelete.isNotEmpty()) deletePdfsUseCase(pdfsToDelete)
+
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false, isSelectionMode = false, selectedIds = persistentSetOf()) }
                         _events.send(HomeEvent.ShowSnackbar("Items deleted successfully"))

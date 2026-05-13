@@ -47,6 +47,14 @@ class PdfRepositoryImpl @Inject constructor(
     // 🌟 THE ELITE FIX: Physical Folder Creation Sync
     override suspend fun createManagedFolder(name: String, parentPath: String?, isVault: Boolean): Result<String> {
         return try {
+            val root = parentPath ?: deviceStorage.getPdfProRootFolder()
+            val targetFile = File(root, name)
+
+            // 🛑 YAHAN ROK LIYA: Agar us exact jagah par same naam hai
+            if (targetFile.exists()) {
+                return Result.failure(Exception("A folder named '$name' already exists here!"))
+            }
+
             // 1. Pehle Physical OS me folder banao
             val newPhysicalPath = deviceStorage.createPhysicalFolder(name, parentPath)
             if (newPhysicalPath != null) {
@@ -54,21 +62,26 @@ class PdfRepositoryImpl @Inject constructor(
                 pdfDao.insertFolder(FolderEntity(absolutePath = newPhysicalPath, name = name, parentPath = parentPath, isVault = isVault))
                 Result.success(newPhysicalPath)
             } else {
-                Result.failure(Exception("Failed to create physical folder"))
+                Result.failure(Exception("Failed to create physical folder. Check permissions."))
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    // 🌟 THE ELITE FIX: Physical Folder Rename Sync
-    // 🌟 THE ELITE FIX: Physical Folder Rename Sync
-    // 🌟 THE ELITE FIX: Physical Folder Rename Sync
     override suspend fun renameManagedFolder(oldPath: String, newName: String): Result<Unit> {
+        val oldFile = File(oldPath)
+        val parentDir = oldFile.parentFile ?: return Result.failure(Exception("Invalid folder path"))
+        val targetFile = File(parentDir, newName)
+
+        // 🛑 YAHAN ROK LIYA: (Maths aur maths ko alag rakhne ke liye ignoreCase = true lagaya hai)
+        if (targetFile.exists() && !oldFile.name.equals(newName, ignoreCase = true)) {
+            return Result.failure(Exception("A folder named '$newName' already exists here!"))
+        }
+
         val newPhysicalPath = deviceStorage.renamePhysicalFile(oldPath, newName)
 
         return if (newPhysicalPath != null) {
-            // 🌟 FIX: Tumhare DAO ke asli functions yahan call kar diye hain
             pdfDao.cascadeRenameFolders(oldPath, newPhysicalPath, newName)
             pdfDao.cascadeRenamePdfs(oldPath, newPhysicalPath)
             Result.success(Unit)
@@ -93,18 +106,34 @@ class PdfRepositoryImpl @Inject constructor(
     override suspend fun moveFolderToVirtualFolder(folderPath: String, targetPath: String?, isVault: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         val target = targetPath ?: deviceStorage.getPdfProRootFolder()
 
-        // 🌟 ELITE FIX 2: INCEPTION LOOP GUARD
-        // Agar destination path source path ke andar hi hai, toh turant block karo!
-        if (target.startsWith(folderPath)) {
-            return@withContext Result.failure(Exception("Cannot move a folder into its own sub-folder!"))
+        // 🌟 ELITE FIX 2: INCEPTION LOOP GUARD (BULLETPROOF)
+        if (target == folderPath || target.startsWith("$folderPath/")) {
+            return@withContext Result.failure(Exception("Cannot move a folder into itself or its own sub-folder!"))
         }
 
         val newPhysicalPath = deviceStorage.movePhysicalFile(folderPath, target)
 
         return@withContext if (newPhysicalPath != null) {
-            // OS me move ho gaya, ab DB cascade update karo
-            pdfDao.cascadeRenameFolders(folderPath, newPhysicalPath, File(newPhysicalPath).name)
+            // 1. अंदर के सारे बच्चे (Sub-folders & PDFs) का पाथ अपडेट करो
+            val newName = File(newPhysicalPath).name
+            pdfDao.cascadeRenameFolders(folderPath, newPhysicalPath, newName)
             pdfDao.cascadeRenamePdfs(folderPath, newPhysicalPath)
+
+            // 🌟 2. ELITE FIX: जिस फोल्डर को मूव किया है, उसका अपना 'parentPath' भी अपडेट करो!
+            val newParentForMovedFolder = if (target == deviceStorage.getPdfProRootFolder()) null else target
+
+            // 🌟 ELITE FIX: cascadeRenameFolders ने पाथ बदल दिया है,
+            // इसलिए अब हम फोल्डर को उसके 'नये' पाथ से ही ढूंढेंगे!
+            pdfDao.moveFolder(
+                oldAbsolutePath = newPhysicalPath, // ✅ बस folderPath को हटाकर newPhysicalPath कर दो!
+                newAbsolutePath = newPhysicalPath,
+                newParentPath = newParentForMovedFolder,
+                isVault = isVault
+            )
+
+            // 3. Move होने के बाद उसे Recent से हटाओ
+            pdfDao.updateFolderLastOpenedTime(newPhysicalPath, 0L)
+
             Result.success(Unit)
         } else {
             Result.failure(Exception("Move physically failed. Check storage permissions or collision."))
@@ -141,7 +170,8 @@ class PdfRepositoryImpl @Inject constructor(
                     val newPhysicalPath = deviceStorage.movePhysicalFile(pdfToMove.path, targetPhysicalDir)
                     if (newPhysicalPath != null) {
                         pdfDao.updatePdfNameAndPath(pdfId, pdfToMove.name, newPhysicalPath)
-                        pdfDao.movePdfToFolder(pdfId, targetPhysicalDir, isVault)
+                        // 🌟 FIX: targetPhysicalDir ki jagah 'targetPath' use karein taaki Root folder ke liye null save ho!
+                        pdfDao.movePdfToFolder(pdfId, targetPath, isVault)
                         movedCount++
                     }
                 }
@@ -258,6 +288,32 @@ class PdfRepositoryImpl @Inject constructor(
         val query = SimpleSQLiteQuery(getSortQuery("SELECT * FROM pdf_table WHERE isVault = 0", sortType))
         return pdfDao.getSortedPdfs(query).map { list -> list.map { it.toDomainModel() } }
     }
+    override fun getUncategorizedPdfs(sortType: SortType): Flow<List<PdfFile>> {
+        val baseQuery = """
+            SELECT * FROM pdf_table 
+            WHERE isVault = 0 
+            AND (parentPath IS NULL OR parentPath NOT IN (SELECT absolutePath FROM managed_folders WHERE isVault = 0))
+        """.trimIndent()
+
+        val query = SimpleSQLiteQuery(getSortQuery(baseQuery, sortType))
+        return pdfDao.getSortedPdfs(query).map { list -> list.map { it.toDomainModel() } }
+    }
+    // 🌟 THE ELITE FIX: Database se Paging 3 ke page mangwane ka logic
+    // 🌟 THE ELITE FIX: Database se Paging 3 ke page mangwane ka logic
+    override fun getAllPdfsPaged(sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>> {
+        val baseQuery = """
+            SELECT * FROM pdf_table 
+            WHERE isVault = 0 
+            AND (parentPath IS NULL OR parentPath NOT IN (SELECT absolutePath FROM managed_folders WHERE isVault = 0))
+        """.trimIndent()
+
+        val query = SimpleSQLiteQuery(getSortQuery(baseQuery, sortType))
+
+        return androidx.paging.Pager(
+            config = androidx.paging.PagingConfig(pageSize = 30, prefetchDistance = 15, enablePlaceholders = false),
+            pagingSourceFactory = { pdfDao.getUncategorizedPdfsPaged(query) }
+        ).flow.map { pagingData -> pagingData.map { it.toDomainModel() } }
+    }
 
     override fun getFavoritePdfs(sortType: SortType): Flow<List<PdfFile>> {
         val query = SimpleSQLiteQuery(getSortQuery("SELECT * FROM pdf_table WHERE isFavorite = 1 AND isVault = 0", sortType))
@@ -285,6 +341,7 @@ class PdfRepositoryImpl @Inject constructor(
     }
 
     // 🌟 ELITE FIX: Ye function physical storage scan karke pehle se bane folders ko Database me wapas layega
+    // 🌟 ELITE FIX: Ye function physical storage scan karke pehle se bane folders ko Database me wapas layega
     private suspend fun syncPhysicalFoldersWithDb() {
         val rootPath = deviceStorage.getPdfProRootFolder()
         val rootDir = File(rootPath)
@@ -297,11 +354,12 @@ class PdfRepositoryImpl @Inject constructor(
                     val parentFile = folder.parentFile?.absolutePath
                     val normalizedParent = if (parentFile == rootPath) null else parentFile
 
+                    // बस इतना ही रखना है! कोई -1 वाला लॉजिक नहीं। (PdfDao में IGNORE अपना काम खुद कर लेगा)
                     pdfDao.insertFolder(
                         FolderEntity(
                             absolutePath = folder.absolutePath,
                             name = folder.name,
-                            parentPath = normalizedParent, // Match with Home Root
+                            parentPath = normalizedParent,
                             isVault = false
                         )
                     )

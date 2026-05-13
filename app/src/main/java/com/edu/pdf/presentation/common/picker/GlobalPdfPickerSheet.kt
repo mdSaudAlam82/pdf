@@ -63,6 +63,7 @@ import com.edu.pdf.presentation.home.components.PdfThumbnail
 import com.edu.pdf.presentation.search.components.HighlightedText
 
 @OptIn(ExperimentalMaterial3Api::class)
+// 1. THE ROUTE (ये सिर्फ ViewModel को होल्ड करेगा)
 @Composable
 fun GlobalPdfPickerSheet(
     onDismiss: () -> Unit,
@@ -70,22 +71,38 @@ fun GlobalPdfPickerSheet(
     viewModel: PdfPickerViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // सारा डेटा नीचे Stateless UI को पास कर दिया
+    GlobalPdfPickerSheetContent(
+        state = state,
+        onDismiss = onDismiss,
+        onPdfsSelected = onPdfsSelected,
+        onAction = viewModel::onAction
+    )
+}
+
+// 2. THE PURE UI (इसे ViewModel का कोई आईडिया नहीं है)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlobalPdfPickerSheetContent(
+    state: PdfPickerState,
+    onDismiss: () -> Unit,
+    onPdfsSelected: (List<String>) -> Unit,
+    onAction: (PdfPickerAction) -> Unit // सीधा Action पास हुआ
+) {
     val haptic = LocalHapticFeedback.current
 
     Dialog(
         onDismissRequest = {
-            // 🌟 PRO FIX: Dialog ka apna Back System override kar diya!
             if (state.currentFolderId != null) {
-                // Folder ke andar hain, toh ek step piche jao
                 val parentFolder = if (state.breadcrumbs.size > 1) {
                     state.breadcrumbs[state.breadcrumbs.size - 2]
                 } else {
                     null
                 }
-                viewModel.onAction(PdfPickerAction.NavigateToFolder(parentFolder))
+                onAction(PdfPickerAction.NavigateToFolder(parentFolder)) // 'viewModel.' हटा दिया
             } else {
-                // Root par hain, toh picker band karo
-                viewModel.onAction(PdfPickerAction.ClearSelection)
+                onAction(PdfPickerAction.ClearSelection) // 'viewModel.' हटा दिया
                 onDismiss()
             }
         },
@@ -103,7 +120,7 @@ fun GlobalPdfPickerSheet(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(onClick = {
-                                viewModel.onAction(PdfPickerAction.ClearSelection)
+                                onAction(PdfPickerAction.ClearSelection)
                                 onDismiss()
                             }) {
                                 Icon(Icons.Default.Close, contentDescription = "Close")
@@ -114,7 +131,7 @@ fun GlobalPdfPickerSheet(
                                 Button(
                                     onClick = {
                                         onPdfsSelected(state.selectedIds.toList())
-                                        viewModel.onAction(PdfPickerAction.ClearSelection)
+                                       onAction(PdfPickerAction.ClearSelection)
                                     },
                                     modifier = Modifier.padding(end = 8.dp)
                                 ) {
@@ -126,7 +143,7 @@ fun GlobalPdfPickerSheet(
                         // 🌟 Premium Search Bar
                         OutlinedTextField(
                             value = state.searchQuery,
-                            onValueChange = { viewModel.onAction(PdfPickerAction.OnSearchQueryChange(it)) },
+                            onValueChange = { onAction(PdfPickerAction.OnSearchQueryChange(it)) },
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                             placeholder = { Text("Search files...") },
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
@@ -142,7 +159,7 @@ fun GlobalPdfPickerSheet(
                             com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                                 breadcrumbs = state.breadcrumbs,
                                 rootName = "Root",
-                                onNavigate = { folder -> viewModel.onAction(PdfPickerAction.NavigateToFolder(folder)) }
+                                onNavigate = { folder -> onAction(PdfPickerAction.NavigateToFolder(folder)) }
                             )
                         }
                     }
@@ -164,7 +181,7 @@ fun GlobalPdfPickerSheet(
                                     folder = item.folder,
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        viewModel.onAction(PdfPickerAction.NavigateToFolder(item.folder))
+                                        onAction(PdfPickerAction.NavigateToFolder(item.folder))
                                     }
                                 )
                             }
@@ -176,7 +193,7 @@ fun GlobalPdfPickerSheet(
                                     isSelected = isSelected,
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        viewModel.onAction(PdfPickerAction.ToggleSelection(item.pdf.id))
+                                        onAction(PdfPickerAction.ToggleSelection(item.pdf.id))
                                     }
                                 )
                             }

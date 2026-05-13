@@ -20,7 +20,12 @@ interface PdfRepository {
     suspend fun moveFolderToVirtualFolder(folderPath: String, targetPath: String?, isVault: Boolean): Result<Unit>
 
     fun getRecentPdfs(): Flow<List<PdfFile>>
+
+    fun getUncategorizedPdfs(sortType: SortType): Flow<List<PdfFile>>
     fun getAllPdfs(sortType: SortType): Flow<List<PdfFile>>
+
+    // 🌟 THE ELITE FIX: Home Screen Paging Support
+    fun getAllPdfsPaged(sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
     fun getFavoritePdfs(sortType: SortType): Flow<List<PdfFile>>
     fun searchPdfs(query: String): Flow<List<PdfFile>>
     suspend fun scanAndSavePdfs()

@@ -12,11 +12,12 @@ import javax.inject.Inject
 import androidx.core.net.toUri
 
 // 🌟 1. STRICT MVI: State (Single Source of Truth)
-// Future me Gemini AI aur Scanner ki saari states yahin aayengi!
+// Yahan humne pdfUri ko add kar diya hai
 data class PdfViewerUiState(
+    val pdfUri: Uri? = null,
     val isTopBarVisible: Boolean = true,
     val isNightMode: Boolean = false,
-    val isSearchActive: Boolean = false // 🌟 NAYA: Find in page ke liye
+    val isSearchActive: Boolean = false
 )
 
 // 🌟 2. STRICT MVI: Actions (Intents from UI)
@@ -32,13 +33,18 @@ class PdfViewerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    val pdfUri: Uri? = savedStateHandle.get<String>("pdfPath")?.let(fun(path: String): Uri? {
-        return if (path.startsWith("content://") || path.startsWith("file://")) path.toUri() else Uri.fromFile(File(path))
-    })
-
     // 🌟 3. STRICT MVI: State Flow
     private val _uiState = MutableStateFlow(PdfViewerUiState())
     val uiState = _uiState.asStateFlow()
+
+    // 🌟 NAYA: App start hote hi PDF ka path nikal kar hum state me daal rahe hain
+    init {
+        val path = savedStateHandle.get<String>("pdfPath")
+        val uri = path?.let {
+            if (it.startsWith("content://") || it.startsWith("file://")) it.toUri() else Uri.fromFile(File(it))
+        }
+        _uiState.update { it.copy(pdfUri = uri) }
+    }
 
     // 🌟 4. STRICT MVI: Reducer (Brain of the ViewModel)
     fun onAction(action: PdfViewerAction) {

@@ -74,8 +74,9 @@ data class UnifiedFolderUiState(
     val folderType: FolderType = FolderType.PHYSICAL_DEVICE,
     val folderId: String = "",
     val folderName: String = "",
-    val folders: ImmutableList<HomeItem.FolderItem> = persistentListOf(), // 🌟 Sirf Folders yahan rahenge
+    val folders: ImmutableList<HomeItem.FolderItem> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
+    val foldersTree: ImmutableList<Folder> = persistentListOf(), // 🌟 NAYA: Khud ka folders tree
     val isSelectionMode: Boolean = false,
     val selectedIds: PersistentSet<String> = persistentSetOf(),
     val isGridView: Boolean = false,
@@ -162,8 +163,8 @@ class UnifiedFolderViewModel @Inject constructor(
     private val prefsAndTypeFlow = combine(userPreferences.isFolderGridViewFlow, _sortType, _currentFolderType) { isGrid, sort, type -> Triple(isGrid, sort, type) }
 
     val uiState: StateFlow<UnifiedFolderUiState> = combine(
-        foldersFlow, breadcrumbsFlow, prefsAndTypeFlow, _internalState
-    ) { folders, breadcrumbs, prefs, internal ->
+        foldersFlow, breadcrumbsFlow, repository.getAllManagedFolders(isVault = false), prefsAndTypeFlow, _internalState
+    ) { folders, breadcrumbs, tree, prefs, internal ->
         val (isGrid, sort, type) = prefs
         val isPhysical = type == FolderType.PHYSICAL_DEVICE
         val isVault = type == FolderType.SECURE_VAULT
@@ -172,6 +173,7 @@ class UnifiedFolderViewModel @Inject constructor(
             isLoading = false,
             folders = folders,
             breadcrumbs = breadcrumbs,
+            foldersTree = tree.toImmutableList(), // 🌟 Ab tree yahan se milega
             isGridView = isGrid,
             sortType = sort,
             canCreateSubFolders = !isPhysical && !isVault,
@@ -200,10 +202,20 @@ class UnifiedFolderViewModel @Inject constructor(
             is UnifiedFolderAction.ConfirmCreateFolder -> {
                 val folderName = _internalState.value.textInput.trim()
                 if (folderName.isNotBlank()) {
-                    _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
+                    _internalState.update { it.copy(isProcessing = true) } // 🌟 Sheet abhi band nahi karenge
                     viewModelScope.launch(Dispatchers.IO) {
-                        repository.createManagedFolder(folderName, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
-                        withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ShowSnackbar("Folder created")) }
+                        val result = repository.createManagedFolder(folderName, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
+                        withContext(Dispatchers.Main) {
+                            _internalState.update { it.copy(isProcessing = false) }
+                            if (result.isSuccess) {
+                                // Success hone par sheet band karo aur message dikhao
+                                _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.None, textInput = "") }
+                                _events.send(UnifiedFolderEvent.ShowSnackbar("Folder created"))
+                            } else {
+                                // Fail hone par error message dikhao (Sheet open rahegi)
+                                _events.send(UnifiedFolderEvent.ShowSnackbar(result.exceptionOrNull()?.message ?: "Error creating folder"))
+                            }
+                        }
                     }
                 }
             }
@@ -211,13 +223,21 @@ class UnifiedFolderViewModel @Inject constructor(
                 val state = _internalState.value.activeSheetState as? UnifiedFolderSheetState.RenameDialog ?: return
                 val newName = _internalState.value.textInput.trim()
                 if (newName.isNotBlank()) {
-                    _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
+                    _internalState.update { it.copy(isProcessing = true) }
                     viewModelScope.launch(Dispatchers.IO) {
-                        when (val item = state.item) {
+                        val result = when (val item = state.item) {
                             is HomeItem.FolderItem -> repository.renameManagedFolder(item.folder.folderId, newName)
-                            is HomeItem.PdfItem -> renamePdfUseCase(item.pdf, newName)
+                            is HomeItem.PdfItem -> Result.success(renamePdfUseCase(item.pdf, newName)).map{} // Assume PDF rename doesn't fail for now
                         }
-                        withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) } }
+                        withContext(Dispatchers.Main) {
+                            _internalState.update { it.copy(isProcessing = false) }
+                            if (result.isSuccess) {
+                                _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.None, textInput = "") }
+                                _events.send(UnifiedFolderEvent.ShowSnackbar("Renamed successfully"))
+                            } else {
+                                _events.send(UnifiedFolderEvent.ShowSnackbar(result.exceptionOrNull()?.message ?: "Error renaming folder"))
+                            }
+                        }
                     }
                 }
             }

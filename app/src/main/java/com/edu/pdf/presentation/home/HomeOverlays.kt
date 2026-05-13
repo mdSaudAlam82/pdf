@@ -132,7 +132,7 @@ fun HomeOverlays(
                         onClick = {
                             keyboard?.hide()
                             // 🌟 MVI FIX: Action के अंदर नाम भेजने की ज़रूरत नहीं
-                            onAction(HomeAction.ConfirmCreateFolder)
+                            onAction(HomeAction.ConfirmCreateFolder(state.textInput))
                         },
                         enabled = state.textInput.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -253,7 +253,7 @@ fun HomeOverlays(
                         onClick = {
                             keyboard?.hide()
                             // 🌟 MVI FIX: Action के अंदर नाम भेजने की ज़रूरत नहीं
-                            onAction(HomeAction.ConfirmRename)
+                            onAction(HomeAction.ConfirmRename(activeSheet.item, state.textInput))
                         },
                         enabled = state.textInput.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -282,7 +282,7 @@ fun HomeOverlays(
                 },
                 confirmButton = {
                     Button(
-                        onClick = { onAction(HomeAction.ConfirmDelete) },
+                        onClick = { onAction(HomeAction.ConfirmDelete(activeSheet.items)) },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) { Text("Delete", fontWeight = FontWeight.Bold) }
                 },

@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.paging.compose.itemKey
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.home.HomeAction
 import com.edu.pdf.presentation.home.HomeSheetState
@@ -38,7 +39,8 @@ fun HomeContent(
     pagerState: PagerState,
     onAction: (HomeAction) -> Unit,
     onToggleSelection: (String) -> Unit,
-    onSelectionModeChange: (Boolean) -> Unit
+    onSelectionModeChange: (Boolean) -> Unit,
+    pagedPdfs: androidx.paging.compose.LazyPagingItems<HomeItem.PdfItem>,
 ) {
     val onLongPressEnableSelection: (String) -> Unit = { id ->
         if (!isSelectionMode) {
@@ -46,7 +48,7 @@ fun HomeContent(
             if (!selectedPdfs.contains(id)) onToggleSelection(id)
         }
     }
-    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+    androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let { onAction(HomeAction.ImportFile(it.toString())) }
@@ -60,38 +62,77 @@ fun HomeContent(
             userScrollEnabled = !isSelectionMode
         ) { page ->
             PullToRefreshBox(isRefreshing = isRefreshing, onRefresh = { onAction(HomeAction.RefreshData) }) {
-                val currentList = when (page) {
-                    0 -> state.recentItems
-                    1 -> state.currentFolderItems
-                    else -> state.favoritePdfs.map { HomeItem.PdfItem(it) }
-                }
 
-                if (currentList.isEmpty()) {
-                    EmptyStateView(title = "No Items Here", subtitle = "Start by creating a folder or adding PDFs.")
-                } else {
-                    // 🌟 ELITE FIX: Meri wo galti theek kar di! Ab Grid aur List dono check honge
-                    if (state.isGridView) {
-                        key(state.sortType) {
-                            LazyVerticalGrid(
-                                columns = GridCells.Adaptive(minSize = 110.dp),
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 120.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(20.dp)
-                            ) {
-                                items(currentList, key = { it.id }) { item ->
-                                    UnifiedGridItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                // 🌟 MVI STRICT FIX: All Files (Page 1) me ab Paging use hoga
+                if (page == 1) {
+                    if (state.currentFolders.isEmpty() && pagedPdfs.itemCount == 0) {
+                        EmptyStateView(title = "No Items Here", subtitle = "Start by creating a folder or adding PDFs.")
+                    } else {
+                        if (state.isGridView) {
+                            key(state.sortType) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Adaptive(minSize = 110.dp),
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 120.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                                ) {
+                                    items(state.currentFolders, key = { it.id }) { item ->
+                                        UnifiedGridItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                    }
+                                    items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
+                                        val pdfItem = pagedPdfs[index]
+                                        if (pdfItem != null) UnifiedGridItem(pdfItem, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                    }
+                                }
+                            }
+                        } else {
+                            key(state.sortType) {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(bottom = 120.dp)
+                                ) {
+                                    items(state.currentFolders, key = { it.id }) { item ->
+                                        UnifiedListItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                    }
+                                    items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
+                                        val pdfItem = pagedPdfs[index]
+                                        if (pdfItem != null) UnifiedListItem(pdfItem, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                    }
                                 }
                             }
                         }
+                    }
+                } else {
+                    // Page 0 (Recent) aur Page 2 (Favorites) ka purana logic
+                    val currentList = if (page == 0) state.recentItems else state.favoritePdfs.map { HomeItem.PdfItem(it) }
+
+                    if (currentList.isEmpty()) {
+                        EmptyStateView(title = "No Items Here", subtitle = "Start by creating a folder or adding PDFs.")
                     } else {
-                        key(state.sortType) {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 120.dp)
-                            ) {
-                                items(currentList, key = { it.id }) { item ->
-                                    UnifiedListItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                        if (state.isGridView) {
+                            key(state.sortType) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Adaptive(minSize = 110.dp),
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 120.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                                ) {
+                                    items(currentList, key = { it.id }) { item ->
+                                        UnifiedGridItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                    }
+                                }
+                            }
+                        } else {
+                            key(state.sortType) {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(bottom = 120.dp)
+                                ) {
+                                    items(currentList, key = { it.id }) { item ->
+                                        UnifiedListItem(item, isSelectionMode, selectedPdfs, onAction, onToggleSelection, onLongPressEnableSelection)
+                                    }
                                 }
                             }
                         }

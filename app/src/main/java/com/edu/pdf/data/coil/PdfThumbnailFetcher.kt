@@ -23,45 +23,7 @@ import okio.FileSystem
 import okio.Path.Companion.toOkioPath
 import java.io.File
 import java.io.FileOutputStream
-import java.util.concurrent.ConcurrentLinkedQueue
 
-object PdfBitmapPool {
-    private val pool = ConcurrentLinkedQueue<Bitmap>()
-    private const val MAX_POOL_SIZE = 20
-
-    fun getBitmap(width: Int, height: Int): Bitmap {
-        val requiredBytes = width * height * 4
-
-        val reusableBitmap = pool.firstOrNull { it.allocationByteCount >= requiredBytes }
-
-        if (reusableBitmap != null) {
-            pool.remove(reusableBitmap)
-            reusableBitmap.reconfigure(width, height, Bitmap.Config.ARGB_8888)
-            reusableBitmap.eraseColor(Color.WHITE)
-            return reusableBitmap
-        }
-
-        // KTX function used as suggested by Android Studio
-        val newBitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        newBitmap.eraseColor(Color.WHITE)
-        return newBitmap
-    }
-
-    fun releaseBitmap(bitmap: Bitmap) {
-        if (pool.size < MAX_POOL_SIZE) {
-            pool.add(bitmap)
-        } else {
-            bitmap.recycle()
-        }
-    }
-
-    // Safety function for future memory trimmings
-    @Suppress("unused")
-    fun clearPool() {
-        pool.forEach { it.recycle() }
-        pool.clear()
-    }
-}
 private val renderDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(3)
 
 class PdfThumbnailFetcher(
@@ -79,10 +41,12 @@ class PdfThumbnailFetcher(
         val cacheFolder = File(context.cacheDir, "smart_pdf_thumbnails")
         if (!cacheFolder.exists()) cacheFolder.mkdirs()
 
-        val thumbFileName = "${pdf.id.hashCode()}.webp"
+        // 🌟 THE ELITE FIX: UUID का इस्तेमाल करें ताकि दुनिया की कोई भी दो PDF का नाम कभी सेम न हो सके!
+        val uniqueId = java.util.UUID.nameUUIDFromBytes(pdf.id.toByteArray()).toString()
+        val thumbFileName = "$uniqueId.webp"
         val cachedThumbFile = File(cacheFolder, thumbFileName)
 
-        // 🌟 TUMHARA ORIGINAL LOGIC: Agar .webp pehle se hai toh seedha return karo (Fastest!)
+
         if (cachedThumbFile.exists() && cachedThumbFile.length() > 500) {
             return@withContext SourceFetchResult(
                 source = ImageSource(
@@ -95,18 +59,18 @@ class PdfThumbnailFetcher(
         }
         ensureActive()
 
-        // Safely calculate bounds
+
         val reqWidth = options.size.width
         val targetWidth = if (reqWidth is Dimension.Pixels && reqWidth.px > 0) reqWidth.px else 300
         val boundedWidth = targetWidth.coerceIn(150, 500)
 
-        // 🌟 NAYA LOGIC: Variables ko bahar define kiya taaki finally block mein inko close kar sakein
+
         var pfd: ParcelFileDescriptor? = null
         var renderer: PdfRenderer? = null
         var page: PdfRenderer.Page? = null
 
         try {
-            // Seedha file open karo, PDF render karo bina kisi cache ke
+
             pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
             renderer = PdfRenderer(pfd)
 
@@ -115,26 +79,28 @@ class PdfThumbnailFetcher(
             page = renderer.openPage(0)
             ensureActive()
 
-            // 🌟 FIX 1: Safety check. Agar corrupt PDF hai aur width/height 0 hai toh null return karo, crash mat karo.
+
             if (page.width <= 0 || page.height <= 0) {
                 return@withContext null
             }
 
             val aspectRatio = page.height.toFloat() / page.width.toFloat()
 
-            // 🌟 FIX 2: coerceAtLeast(1) taaki height kabhi zero (0) na bane.
+
             val height = (boundedWidth * aspectRatio).toInt().coerceAtLeast(1)
 
-            // ✅ NAYA LOGIC: Pool se memory lo
-            val bitmap = PdfBitmapPool.getBitmap(boundedWidth, height)
+
+            // 🌟 ELITE FIX: Android OS से एक नया कागज़ (Bitmap) माँगो और उसे एकदम सफ़ेद (White) कर दो
+            val bitmap = createBitmap(boundedWidth, height, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(Color.WHITE)
+
             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
-            // Image ko .webp me save kar do
+
             FileOutputStream(cachedThumbFile).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 85, out)
             }
-            // 🌟 JADOO: Delete karne ke bajaye, memory wapas Pool me daal do!
-            PdfBitmapPool.releaseBitmap(bitmap)
+            bitmap.recycle()
 
             return@withContext SourceFetchResult(
                 source = ImageSource(
@@ -145,16 +111,15 @@ class PdfThumbnailFetcher(
                 dataSource = DataSource.DISK
             )
         } catch (_: SecurityException) {
-            // 🌟 FIX 3: runCatching ka use taaki delete fail ho tab bhi app crash na ho
+
             runCatching { if (cachedThumbFile.exists()) cachedThumbFile.delete() }
             throw SecurityException("PDF_IS_LOCKED")
         } catch (e: Exception) {
             e.printStackTrace()
-            // 🌟 FIX 3: runCatching ka use
+
             runCatching { if (cachedThumbFile.exists()) cachedThumbFile.delete() }
             throw e
         } finally {
-            // SABSE ZAROORI FIX: Kaam hote hi turant saari native memory free kar do!
             try {
                 page?.close()
                 renderer?.close()

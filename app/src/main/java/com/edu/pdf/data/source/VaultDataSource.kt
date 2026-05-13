@@ -48,15 +48,23 @@ class VaultDataSource @Inject constructor(
 
             if (tmpSecureFile.renameTo(finalSecureFile)) {
                 onOriginalDelete(originalFile.absolutePath)
-                originalFile.delete()
+
+                // 🌟 ELITE SECURITY FIX: चेक करो कि फाइल सच में डिलीट हुई या नहीं!
+                val isDeleted = originalFile.delete()
+                if (!isDeleted && originalFile.exists()) {
+                    // अगर OS ने डिलीट करने से रोक दिया, तो Vault वाली कॉपी भी डिलीट कर दो (Rollback)
+                    finalSecureFile.delete()
+                    throw Exception("OS prevented deletion! File is still public.")
+                }
+
                 finalSecureFile.absolutePath
             } else {
                 tmpSecureFile.delete()
                 null
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             tmpSecureFile.delete()
-            null
+            throw e // Error UI तक भेजो
         }
     }
 

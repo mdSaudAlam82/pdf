@@ -9,7 +9,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -19,16 +31,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.CheckBox
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,9 +71,7 @@ import androidx.paging.compose.itemKey
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
 import com.edu.pdf.domain.model.HomeItem
-import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.presentation.home.HomeAction
-import com.edu.pdf.presentation.home.HomeViewModel
 import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
@@ -66,8 +86,7 @@ fun UnifiedFolderScreen(
     onPdfClick: (String) -> Unit,
     onFolderNavigate: (String, String, FolderType) -> Unit,
     onBreadcrumbNavigate: (Folder?) -> Unit,
-    viewModel: UnifiedFolderViewModel = hiltViewModel(),
-    homeViewModel: HomeViewModel = hiltViewModel()
+    viewModel: UnifiedFolderViewModel = hiltViewModel()
 ) {
     LaunchedEffect(folderId, folderName, folderType) {
         if (folderId != null && folderName != null && folderType != null) {
@@ -76,8 +95,7 @@ fun UnifiedFolderScreen(
     }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val pagedPdfs = viewModel.pagedPdfsFlow.collectAsLazyPagingItems() // 🌟 ELITE FIX: Ab Physical aur Virtual dono Paged hain!
-    val foldersTree by homeViewModel.foldersTree.collectAsStateWithLifecycle()
+    val pagedPdfs = viewModel.pagedPdfsFlow.collectAsLazyPagingItems()
 
     val isSelectionMode = uiState.isSelectionMode
     val selectedPdfs = uiState.selectedIds
@@ -110,13 +128,18 @@ fun UnifiedFolderScreen(
         }
     }
 
-    val selectedItems by remember(uiState.folders, selectedPdfs) {
+    val selectedItems by remember(uiState.folders, selectedPdfs, pagedPdfs.itemSnapshotList) {
         derivedStateOf {
             if (selectedPdfs.isEmpty()) emptyList()
             else {
-                selectedPdfs.map { id ->
+                val loadedPdfs = pagedPdfs.itemSnapshotList.items // Paging से असली डेटा निकालो
+                selectedPdfs.mapNotNull { id ->
+                    // पहले फोल्डर्स में ढूंढो
                     val folder = uiState.folders.find { it.folder.folderId == id }
-                    folder ?: HomeItem.PdfItem(PdfFile(id, "", id, 0L, 0L))
+                    if (folder != null) return@mapNotNull folder
+
+                    // अगर फोल्डर नहीं है, तो असली PDF लिस्ट में से ढूंढो
+                    loadedPdfs.find { it.pdf.id == id }
                 }
             }
         }
@@ -287,7 +310,7 @@ fun UnifiedFolderScreen(
                 }
             }
         }
-        UnifiedFolderOverlays(state = uiState, foldersTree = foldersTree, onAction = viewModel::onAction)
+        UnifiedFolderOverlays(state = uiState, foldersTree = uiState.foldersTree, onAction = viewModel::onAction)
     }
 }
 

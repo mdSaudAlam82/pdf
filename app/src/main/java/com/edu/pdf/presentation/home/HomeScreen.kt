@@ -60,6 +60,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavHostController
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBarItems
 import com.edu.pdf.presentation.common.UniversalTopBar
@@ -81,10 +82,8 @@ fun HomeScreenWrapper(
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(Environment.isExternalStorageManager()) }
-
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-
+    val pagedPdfs = viewModel.pagedUncategorizedPdfsFlow.collectAsLazyPagingItems()
     val isSelectionMode = uiState.isSelectionMode
     val selectedPdfs = uiState.selectedIds
 
@@ -123,17 +122,19 @@ fun HomeScreenWrapper(
         } else {
             HomeScreenPure(
                 state = uiState,
-                isRefreshing = isRefreshing,
+                isRefreshing = uiState.isRefreshing,
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
+                pagedPdfs = pagedPdfs,
                 navController = navController,
                 onSearchClick = onSearchClick,
                 onSelectionModeChange = { enabled -> viewModel.onAction(HomeAction.SetSelectionMode(enabled)) },
                 onToggleSelection = { id -> viewModel.onAction(HomeAction.ToggleSelection(id)) },
                 onSelectAll = { ids -> viewModel.onAction(HomeAction.SelectAll(ids)) },
                 onAction = viewModel::onAction
+
             )
-            HomeOverlays(state = uiState, foldersTree = viewModel.foldersTree.collectAsStateWithLifecycle().value, onAction = viewModel::onAction)
+            HomeOverlays(state = uiState, foldersTree = uiState.foldersTree, onAction = viewModel::onAction)
         }
     }
 }
@@ -145,6 +146,7 @@ fun HomeScreenPure(
     isRefreshing: Boolean,
     isSelectionMode: Boolean,
     selectedPdfs: PersistentSet<String>,
+    pagedPdfs: androidx.paging.compose.LazyPagingItems<HomeItem.PdfItem>, // 🌟 FIX: Ye line miss ho gayi thi
     navController: NavHostController,
     onSearchClick: () -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
@@ -166,10 +168,14 @@ fun HomeScreenPure(
         currentTab = pagerState.currentPage
     }
 
-    val currentTabItems = remember(currentTab, state.recentItems, state.currentFolderItems, state.favoritePdfs) {
+    // 🌟 FIX: Paging items aur Folders ko mix karke select karne ke liye
+    val currentTabItems = remember(currentTab, state.recentItems, state.currentFolders, state.favoritePdfs, pagedPdfs.itemSnapshotList) {
         when (currentTab) {
             0 -> state.recentItems
-            1 -> state.currentFolderItems
+            1 -> {
+                val pagedList = pagedPdfs.itemSnapshotList.items
+                state.currentFolders + pagedList // Folders aur PDFs dono aayenge
+            }
             2 -> state.favoritePdfs.map { HomeItem.PdfItem(it) }
             else -> emptyList()
         }
@@ -291,6 +297,7 @@ fun HomeScreenPure(
                 isRefreshing = isRefreshing,
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
+                pagedPdfs = pagedPdfs, // 🌟 FIX: Ye pass karna zaroori hai
                 paddingValues = PaddingValues(0.dp),
                 pagerState = pagerState,
                 onAction = onAction,

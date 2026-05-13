@@ -32,16 +32,13 @@ class DeviceStorageDataSource @Inject constructor(
     }
 
     // 🌟 THE ELITE FIX: Physical Folder Creation
+    // 🌟 THE ELITE FIX: No more auto-appending (1), (2). UI will show error now.
     suspend fun createPhysicalFolder(name: String, parentPath: String?): String? = withContext(Dispatchers.IO) {
         val root = parentPath ?: getPdfProRootFolder()
-        var newFolder = File(root, name)
+        val newFolder = File(root, name)
 
-        // Name Conflict Resolution (Agar folder pehle se hai toh (1) laga dega)
-        var counter = 1
-        while (newFolder.exists()) {
-            newFolder = File(root, "$name ($counter)")
-            counter++
-        }
+        // Agar folder pehle se hai, toh null return karo taaki UI ko error bheja ja sake
+        if (newFolder.exists()) return@withContext null
 
         return@withContext if (newFolder.mkdirs()) {
             scanFilesBatch(arrayOf(newFolder.absolutePath))
@@ -49,7 +46,6 @@ class DeviceStorageDataSource @Inject constructor(
         } else null
     }
 
-    // 🌟 THE ELITE FIX: Atomic Move Engine (Data corruption proof)
     suspend fun movePhysicalFile(sourcePath: String, targetFolderPath: String): String? = withContext(Dispatchers.IO) {
         val sourceFile = File(sourcePath)
         if (!sourceFile.exists()) return@withContext null
@@ -58,33 +54,61 @@ class DeviceStorageDataSource @Inject constructor(
         if (!targetDir.exists()) targetDir.mkdirs()
 
         var targetFile = File(targetDir, sourceFile.name)
+
+        val originalNameWithoutExt = sourceFile.nameWithoutExtension
+        val originalExt = sourceFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
         var counter = 1
+
         while (targetFile.exists()) {
-            val nameWithoutExt = sourceFile.nameWithoutExtension
-            val ext = sourceFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
-            targetFile = File(targetDir, "$nameWithoutExt ($counter)$ext")
+            targetFile = File(targetDir, "$originalNameWithoutExt ($counter)$originalExt")
             counter++
         }
 
         return@withContext try {
-            // 1. Copy via Stream (Safe for SD cards too)
-            sourceFile.inputStream().use { input ->
-                targetFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+            // 🌟 1. FAST PATH: OS-Level Atomic Move (1 मिलीसेकंड में पूरा फोल्डर/फाइल मूव होगा, बिना कॉपी किए)
+            if (sourceFile.renameTo(targetFile)) {
+                syncWithMediaStore(sourcePath, targetFile.absolutePath)
+                return@withContext targetFile.absolutePath
             }
 
-            // 2. Verify Size before deleting source
-            if (targetFile.length() == sourceFile.length()) {
-                sourceFile.delete()
-                syncWithMediaStore(sourcePath, targetFile.absolutePath)
-                targetFile.absolutePath
+            // 🌟 2. FALLBACK PATH: अगर 'renameTo' फेल होता है (जैसे Internal Storage से SD Card में मूव करते वक़्त)
+            if (sourceFile.isDirectory) {
+                // 👉 यहाँ क्रैश होता था! अब हम फोल्डर के अंदर जाकर Recursive Copy करेंगे
+                if (sourceFile.copyRecursively(targetFile, overwrite = true)) {
+                    sourceFile.deleteRecursively() // कॉपी सफल होने पर ही पुराना उड़ाएंगे
+                    syncWithMediaStore(sourcePath, targetFile.absolutePath)
+                    targetFile.absolutePath
+                } else {
+                    targetFile.deleteRecursively() // Rollback (अगर फेल हुआ तो आधा-अधूरा काम हटा देंगे)
+                    null
+                }
             } else {
-                targetFile.delete() // Rollback
-                null
+                // PDF Stream Copy
+                sourceFile.inputStream().use { input ->
+                    targetFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                if (targetFile.length() == sourceFile.length()) {
+                    // 🌟 ELITE FIX: Android 11+ Safety! Agar purani file sach me delete nahi ho payi, toh duplication roko.
+                    val isDeleted = sourceFile.delete()
+                    if (isDeleted) {
+                        syncWithMediaStore(sourcePath, targetFile.absolutePath)
+                        return@withContext targetFile.absolutePath
+                    } else {
+                        // Purani file delete nahi hui, isliye nayi copy ko bhi uda do (Rollback)
+                        targetFile.delete()
+                        return@withContext null
+                    }
+                } else {
+                    targetFile.delete() // Rollback due to size mismatch
+                    return@withContext null
+                }
             }
         } catch (_: Exception) {
-            targetFile.delete() // Rollback
+            // कोई भी एरर आने पर कचरा साफ़ करेंगे (Rollback)
+            if (sourceFile.isDirectory) targetFile.deleteRecursively() else targetFile.delete()
             null
         }
     }
@@ -234,11 +258,13 @@ class DeviceStorageDataSource @Inject constructor(
                     File(getPdfProRootFolder())
                 }
                 var tempFile = File(publicDir, fileName)
+
+                val originalNameWithoutExt = tempFile.nameWithoutExtension
+                val originalExt = tempFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
                 var counter = 1
+
                 while (tempFile.exists()) {
-                    val nameWithoutExt = tempFile.nameWithoutExtension
-                    val ext = tempFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
-                    tempFile = File(publicDir, "$nameWithoutExt ($counter)$ext")
+                    tempFile = File(publicDir, "$originalNameWithoutExt ($counter)$originalExt")
                     counter++
                 }
                 tempFile

@@ -36,7 +36,7 @@ interface PdfDao {
     // ==========================================
     // 📁 PHYSICAL FOLDERS (MANAGED HUB & VAULT)
     // ==========================================
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertFolder(folder: FolderEntity)
 
     // 🌟 ELITE FIX: Grouping by ID (New Primary Key) taaki count accurate rahe
@@ -86,12 +86,17 @@ interface PdfDao {
     // ==========================================
     // 🌪️ ELITE CASCADE RENAME ENGINE (Tumhara Original Smart Logic!)
     // ==========================================
+    // फोल्डर और उसके सब-फोल्डर्स का नाम बदलने का नया कोड
     @Query("""
         UPDATE managed_folders 
         SET 
-            absolutePath = REPLACE(absolutePath, :oldPath, :newPath), 
-            parentPath = REPLACE(parentPath, :oldPath, :newPath), 
-            name = CASE WHEN absolutePath = :oldPath THEN :newName ELSE name END 
+            absolutePath = :newPath || SUBSTR(absolutePath, LENGTH(:oldPath) + 1),
+            parentPath = CASE 
+                WHEN parentPath = :oldPath THEN :newPath
+                WHEN parentPath LIKE :oldPath || '/%' THEN :newPath || SUBSTR(parentPath, LENGTH(:oldPath) + 1)
+                ELSE parentPath 
+            END,
+            name = CASE WHEN absolutePath = :oldPath THEN :newName ELSE name END
         WHERE absolutePath = :oldPath OR absolutePath LIKE :oldPath || '/%'
     """)
     suspend fun cascadeRenameFolders(oldPath: String, newPath: String, newName: String)
@@ -99,9 +104,13 @@ interface PdfDao {
     @Query("""
         UPDATE pdf_table 
         SET 
-            path = REPLACE(path, :oldPath, :newPath), 
-            parentPath = REPLACE(parentPath, :oldPath, :newPath) 
-        WHERE parentPath = :oldPath OR path LIKE :oldPath || '/%'
+            path = :newPath || SUBSTR(path, LENGTH(:oldPath) + 1),
+            parentPath = CASE 
+                WHEN parentPath = :oldPath THEN :newPath
+                WHEN parentPath LIKE :oldPath || '/%' THEN :newPath || SUBSTR(parentPath, LENGTH(:oldPath) + 1)
+                ELSE parentPath
+            END
+        WHERE parentPath = :oldPath OR parentPath LIKE :oldPath || '/%' OR path LIKE :oldPath || '/%'
     """)
     suspend fun cascadeRenamePdfs(oldPath: String, newPath: String)
 
@@ -125,6 +134,9 @@ interface PdfDao {
 
     @RawQuery(observedEntities = [PdfEntity::class])
     fun getSortedPdfs(query: SupportSQLiteQuery): Flow<List<PdfEntity>>
+
+    @RawQuery(observedEntities = [PdfEntity::class])
+    fun getSortedPdfsPaged(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
 
     @Query("UPDATE pdf_table SET lastOpenedTime = :time WHERE id = :pdfId")
     suspend fun updateLastOpenedTime(pdfId: String, time: Long)
@@ -200,10 +212,23 @@ interface PdfDao {
     // ==========================================
     // 🌪️ MISSING CASCADE DELETE ENGINE
     // ==========================================
-    @Query("DELETE FROM managed_folders WHERE absolutePath LIKE :path || '%'")
+    // फोल्डर्स को डिलीट करने के लिए नया सुरक्षित कोड
+    @Query("""
+        DELETE FROM managed_folders 
+        WHERE absolutePath = :path OR absolutePath LIKE :path || '/%'
+    """)
     suspend fun cascadeDeleteFolders(path: String)
 
-    @Query("DELETE FROM pdf_table WHERE path LIKE :path || '%' OR parentPath LIKE :path || '%'")
+    @Query("""
+        DELETE FROM pdf_table 
+        WHERE parentPath = :path OR parentPath LIKE :path || '/%' OR path LIKE :path || '/%'
+    """)
     suspend fun cascadeDeletePdfs(path: String)
+
+    // FILE: com/edu/pdf/data/local/dao/PdfDao.kt
+
+    // 🌟 ELITE FIX: Home Screen के लिए Paging 3 Query
+    @RawQuery(observedEntities = [PdfEntity::class])
+    fun getUncategorizedPdfsPaged(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
 
 }
