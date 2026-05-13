@@ -231,4 +231,5 @@ interface PdfDao {
     @RawQuery(observedEntities = [PdfEntity::class])
     fun getUncategorizedPdfsPaged(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
 
+
 }

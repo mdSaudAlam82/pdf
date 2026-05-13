@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.folders.components.FolderMenuSheet
-import com.edu.pdf.presentation.home.HomeHierarchicalMovePickerSheet
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.SortBottomSheet
 import java.text.SimpleDateFormat
@@ -119,13 +118,12 @@ fun UnifiedFolderOverlays(
         }
 
         is UnifiedFolderSheetState.MovePicker -> {
-            HomeHierarchicalMovePickerSheet(
+            // 🌟 NAYA ELITE MVI PICKER FOR UNIFIED FOLDERS
+            com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
                 folders = foldersTree,
-                itemsBeingMoved = sheetState.items,
                 onDismiss = { onAction(UnifiedFolderAction.CloseSheet) },
-                onFolderSelected = { onAction(UnifiedFolderAction.ConfirmMove(it)) },
-                onLocalCreateFolder = { _, _ ->
-                    Toast.makeText(context, "Please create folders from the main screen", Toast.LENGTH_SHORT).show()
+                onTargetSelected = { targetFolderId ->
+                    onAction(UnifiedFolderAction.ConfirmMove(targetFolderId))
                 }
             )
         }

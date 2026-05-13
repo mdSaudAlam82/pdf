@@ -44,6 +44,7 @@ sealed interface UnifiedFolderSheetState {
 sealed interface UnifiedFolderEvent {
     data class ShowSnackbar(val message: String) : UnifiedFolderEvent
     data object ClearMultiSelection : UnifiedFolderEvent
+
 }
 
 sealed interface UnifiedFolderAction {

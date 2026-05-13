@@ -79,6 +79,9 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |   |   |   
 |               |   |   \---picker
 |               |   |           GlobalPdfPickerSheet.kt
+|               |   |           MovePickerSheet.kt
+|               |   |           MovePickerState.kt
+|               |   |           MovePickerViewModel.kt
 |               |   |           PdfPickerViewModel.kt
 |               |   |           
 |               |   +---core
@@ -710,6 +713,7 @@ interface PdfDao {
     // 🌟 ELITE FIX: Home Screen के लिए Paging 3 Query
     @RawQuery(observedEntities = [PdfEntity::class])
     fun getUncategorizedPdfsPaged(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
+
 
 }
 ``n
@@ -2371,6 +2375,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
@@ -2378,6 +2383,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -2396,14 +2402,26 @@ fun PremiumBreadcrumbs(
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
+    // 🌟 ELITE FIX: Auto-Scroll State
+    val listState = rememberLazyListState()
+
+    // 🌟 THE MAGIC: Jab bhi breadcrumbs ki size badhegi, ye automatically last me slide ho jayega
+    LaunchedEffect(breadcrumbs.size) {
+        if (breadcrumbs.isNotEmpty()) {
+            listState.animateScrollToItem(breadcrumbs.size) // Root node (0) + breadcrumbs
+        } else {
+            listState.animateScrollToItem(0)
+        }
+    }
 
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp), // 🌟 Premium Spacing
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        state = listState, // 🌟 State attach kar diya
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 🌟 1. Root Node (e.g., Home)
+        // 1. Root Node (e.g., Home)
         item {
             BreadcrumbPill(
                 name = rootName,
@@ -2417,7 +2435,7 @@ fun PremiumBreadcrumbs(
             )
         }
 
-        // 🌟 2. Sub-folders (Dynamic Path)
+        // 2. Sub-folders (Dynamic Path)
         items(breadcrumbs) { folder ->
             Icon(
                 imageVector = Icons.Default.ChevronRight,
@@ -2441,24 +2459,10 @@ fun PremiumBreadcrumbs(
     }
 }
 
-// 🌟 THE ELITE FIX: The Pill Design (No hardcoded colors!)
 @Composable
 private fun BreadcrumbPill(name: String, isLast: Boolean, onClick: () -> Unit) {
-    // 🌟 THE DYNAMIC SHADOW LOGIC
-    // Active (Last): Red background (primary)
-    // Previous: Light/Dark background (surfaceVariant)
-    val bgColor = if (isLast) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) // 🌟 Light me white-shadow, Dark me dark-shadow
-    }
-
-    val textColor = if (isLast) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
+    val bgColor = if (isLast) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    val textColor = if (isLast) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     val fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium
 
     Box(
@@ -2469,12 +2473,7 @@ private fun BreadcrumbPill(name: String, isLast: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = name,
-            color = textColor,
-            fontWeight = fontWeight,
-            fontSize = 16.sp
-        )
+        Text(text = name, color = textColor, fontWeight = fontWeight, fontSize = 16.sp)
     }
 }
 ``n
@@ -2795,6 +2794,383 @@ private fun PickerPdfRow(pdf: com.edu.pdf.domain.model.PdfFile, searchQuery: Str
             tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.size(24.dp)
         )
+    }
+}
+``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerSheet.kt
+``kotlin
+package com.edu.pdf.presentation.common.picker
+
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.edu.pdf.domain.model.Folder
+import com.edu.pdf.presentation.common.PremiumBreadcrumbs
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MovePickerSheetRoute(
+    folders: List<Folder>,
+    onDismiss: () -> Unit,
+    onTargetSelected: (String?) -> Unit,
+    viewModel: MovePickerViewModel = hiltViewModel()
+) {
+    val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+
+    LaunchedEffect(folders) {
+        viewModel.onAction(MovePickerAction.UpdateFolders(folders))
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is MovePickerEvent.MoveToTarget -> {
+                    onTargetSelected(event.targetFolderId)
+                    // Move hone ke baad Root par reset karega
+                    viewModel.onAction(MovePickerAction.NavigateTo(null))
+                    onDismiss()
+                }
+                is MovePickerEvent.ShowSnackbar -> {
+                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    MovePickerSheetContent(
+        state = state,
+        onAction = viewModel::onAction,
+        onDismiss = onDismiss
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MovePickerSheetContent(
+    state: MovePickerState,
+    onAction: (MovePickerAction) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = {
+            if (state.currentParentId != null) {
+                onAction(MovePickerAction.NavigateBack)
+            } else {
+                onDismiss()
+            }
+        },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        // LATEST PREDICTIVE BACK HANDLER
+        BackHandler(enabled = state.currentParentId != null) {
+            onAction(MovePickerAction.NavigateBack)
+        }
+
+        Scaffold(
+            modifier = Modifier.fillMaxSize().imePadding(),
+            containerColor = MaterialTheme.colorScheme.surface,
+            topBar = {
+                Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+                    Column(modifier = Modifier.statusBarsPadding()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                            Text(
+                                text = "Move to...",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f).padding(start = 8.dp)
+                            )
+                            IconButton(onClick = { onAction(MovePickerAction.ToggleCreateFolderDialog(true)) }) {
+                                Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+
+                        PremiumBreadcrumbs(
+                            breadcrumbs = state.breadcrumbs,
+                            rootName = "Home",
+                            onNavigate = { folder -> onAction(MovePickerAction.NavigateTo(folder?.folderId)) },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                        )
+                    }
+                }
+            },
+            bottomBar = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp)
+                        .navigationBarsPadding()
+                ) {
+                    Button(
+                        onClick = { onAction(MovePickerAction.ConfirmMoveHere) },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Move Here", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+            }
+        ) { paddingValues ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = paddingValues.calculateTopPadding())
+                    .background(MaterialTheme.colorScheme.surface)
+            ) {
+                if (state.isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                } else if (state.subFolders.isEmpty()) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("No sub-folders here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(state.subFolders, key = { it.folderId }) { folder ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onAction(MovePickerAction.NavigateTo(folder.folderId)) }
+                                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // 🌟 UI FIX: Yellow color aur bada size (40.dp)
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Spacer(modifier = Modifier.width(20.dp))
+                                Text(text = folder.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                            // 🌟 UI FIX: HorizontalDivider (Line) yahan se hata di gayi hai!
+                        }
+                    }
+                }
+            }
+        }
+
+        if (state.isCreatingFolder) {
+            val focusRequester = remember { FocusRequester() }
+            val keyboard = LocalSoftwareKeyboardController.current
+
+            LaunchedEffect(Unit) {
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
+
+            AlertDialog(
+                onDismissRequest = { onAction(MovePickerAction.ToggleCreateFolderDialog(false)) },
+                title = { Text("Create New Folder", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
+                text = {
+                    OutlinedTextField(
+                        value = state.newFolderName,
+                        onValueChange = { onAction(MovePickerAction.UpdateFolderName(it)) },
+                        label = { Text("Folder Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = { onAction(MovePickerAction.CreateAndEnterFolder) }, enabled = state.newFolderName.trim().isNotEmpty()) {
+                        Text("Create")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onAction(MovePickerAction.ToggleCreateFolderDialog(false)) }) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        }
+    }
+}
+``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerState.kt
+``kotlin
+package com.edu.pdf.presentation.common.picker
+
+import com.edu.pdf.domain.model.Folder
+
+// Pure Immutable State
+data class MovePickerState(
+    val allFolders: List<Folder> = emptyList(), // Holds the entire folder tree
+    val currentParentId: String? = null,
+    val breadcrumbs: List<Folder> = emptyList(),
+    val subFolders: List<Folder> = emptyList(),
+    val isCreatingFolder: Boolean = false,
+    val newFolderName: String = "",
+    val isLoading: Boolean = false
+)
+
+// Actions triggered from UI
+sealed interface MovePickerAction {
+    data class UpdateFolders(val folders: List<Folder>) : MovePickerAction // Receives folders from Home
+    data class NavigateTo(val folderId: String?) : MovePickerAction
+
+    data object NavigateBack : MovePickerAction
+    data class UpdateFolderName(val name: String) : MovePickerAction
+    data class ToggleCreateFolderDialog(val show: Boolean) : MovePickerAction
+    data object CreateAndEnterFolder : MovePickerAction
+    data object ConfirmMoveHere : MovePickerAction
+}
+
+// One-time Events to UI
+sealed interface MovePickerEvent {
+    data class MoveToTarget(val targetFolderId: String?) : MovePickerEvent
+    data class ShowSnackbar(val message: String) : MovePickerEvent
+}
+``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerViewModel.kt
+``kotlin
+package com.edu.pdf.presentation.common.picker
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.edu.pdf.domain.model.Folder
+import com.edu.pdf.domain.repository.PdfRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class MovePickerViewModel @Inject constructor(
+    private val repository: PdfRepository
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(MovePickerState())
+    val state = _state.asStateFlow()
+
+    private val _events = Channel<MovePickerEvent>()
+    val events = _events.receiveAsFlow()
+
+    fun onAction(action: MovePickerAction) {
+        when (action) {
+            is MovePickerAction.UpdateFolders -> {
+                _state.update { currentState ->
+                    val subFolders = action.folders.filter { it.parentFolderId == currentState.currentParentId && !it.isVault }.sortedBy { it.name.lowercase() }
+                    val breadcrumbs = calculateBreadcrumbs(action.folders, currentState.currentParentId)
+                    currentState.copy(allFolders = action.folders, subFolders = subFolders, breadcrumbs = breadcrumbs, isLoading = false)
+                }
+            }
+            is MovePickerAction.NavigateTo -> {
+                _state.update { currentState ->
+                    val subFolders = currentState.allFolders.filter { it.parentFolderId == action.folderId && !it.isVault }.sortedBy { it.name.lowercase() }
+                    val breadcrumbs = calculateBreadcrumbs(currentState.allFolders, action.folderId)
+                    currentState.copy(currentParentId = action.folderId, subFolders = subFolders, breadcrumbs = breadcrumbs)
+                }
+            }
+            // 🌟 LATEST 2026 MVI LOGIC: Ek step piche jane ka calculation
+            is MovePickerAction.NavigateBack -> {
+                _state.update { currentState ->
+                    // Breadcrumbs se pichle folder ki ID nikaalo (dropLast(1) karke)
+                    val parentId = currentState.breadcrumbs.dropLast(1).lastOrNull()?.folderId
+
+                    val subFolders = currentState.allFolders.filter { it.parentFolderId == parentId && !it.isVault }.sortedBy { it.name.lowercase() }
+                    val breadcrumbs = calculateBreadcrumbs(currentState.allFolders, parentId)
+                    currentState.copy(currentParentId = parentId, subFolders = subFolders, breadcrumbs = breadcrumbs)
+                }
+            }
+            is MovePickerAction.UpdateFolderName -> {
+                _state.update { it.copy(newFolderName = action.name) }
+            }
+            is MovePickerAction.ToggleCreateFolderDialog -> {
+                _state.update { it.copy(isCreatingFolder = action.show, newFolderName = "") }
+            }
+            is MovePickerAction.CreateAndEnterFolder -> createAndEnterFolder()
+            is MovePickerAction.ConfirmMoveHere -> {
+                viewModelScope.launch {
+                    _events.send(MovePickerEvent.MoveToTarget(_state.value.currentParentId))
+                }
+            }
+        }
+    }
+
+    private fun calculateBreadcrumbs(allFolders: List<Folder>, currentId: String?): List<Folder> {
+        val breadcrumbs = mutableListOf<Folder>()
+        var curr = allFolders.find { it.folderId == currentId }
+        while (curr != null) {
+            breadcrumbs.add(0, curr)
+            curr = allFolders.find { it.folderId == curr.parentFolderId }
+        }
+        return breadcrumbs
+    }
+
+    private fun createAndEnterFolder() {
+        val name = _state.value.newFolderName.trim()
+        if (name.isBlank()) return
+
+        val currentParent = _state.value.currentParentId
+
+        viewModelScope.launch(Dispatchers.IO) {
+            // 🌟 FIX: डायलॉग को खुला रहने दो, सिर्फ लोडिंग ऑन करो
+            _state.update { it.copy(isLoading = true) }
+            val result = repository.createManagedFolder(name, currentParent, isVault = false)
+
+            result.onSuccess { newFolderId ->
+                onAction(MovePickerAction.NavigateTo(newFolderId))
+                // 🌟 FIX: जब सच में फोल्डर बन जाए, तभी डायलॉग को बंद करो (isCreatingFolder = false)
+                _state.update { it.copy(isCreatingFolder = false, newFolderName = "", isLoading = false) }
+            }.onFailure { e ->
+                // 🌟 FIX: अगर एरर आया, तो बस लोडिंग बंद होगी और टोस्ट आएगा, डायलॉग/कीबोर्ड खुला रहेगा!
+                _state.update { it.copy(isLoading = false) }
+                _events.send(MovePickerEvent.ShowSnackbar(e.message ?: "Error creating folder"))
+            }
+        }
     }
 }
 ``n
@@ -3791,7 +4167,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.folders.components.FolderMenuSheet
-import com.edu.pdf.presentation.home.HomeHierarchicalMovePickerSheet
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.SortBottomSheet
 import java.text.SimpleDateFormat
@@ -3875,13 +4250,12 @@ fun UnifiedFolderOverlays(
         }
 
         is UnifiedFolderSheetState.MovePicker -> {
-            HomeHierarchicalMovePickerSheet(
+            // 🌟 NAYA ELITE MVI PICKER FOR UNIFIED FOLDERS
+            com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
                 folders = foldersTree,
-                itemsBeingMoved = sheetState.items,
                 onDismiss = { onAction(UnifiedFolderAction.CloseSheet) },
-                onFolderSelected = { onAction(UnifiedFolderAction.ConfirmMove(it)) },
-                onLocalCreateFolder = { _, _ ->
-                    Toast.makeText(context, "Please create folders from the main screen", Toast.LENGTH_SHORT).show()
+                onTargetSelected = { targetFolderId ->
+                    onAction(UnifiedFolderAction.ConfirmMove(targetFolderId))
                 }
             )
         }
@@ -4495,6 +4869,7 @@ sealed interface UnifiedFolderSheetState {
 sealed interface UnifiedFolderEvent {
     data class ShowSnackbar(val message: String) : UnifiedFolderEvent
     data object ClearMultiSelection : UnifiedFolderEvent
+
 }
 
 sealed interface UnifiedFolderAction {
@@ -5241,29 +5616,12 @@ package com.edu.pdf.presentation.home
 
 import android.content.Intent
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -5273,38 +5631,25 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.folders.components.FolderMenuSheet
-import com.edu.pdf.presentation.home.components.MoveFolderListItem
 import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.SortBottomSheet
 import java.text.SimpleDateFormat
@@ -5315,7 +5660,7 @@ import java.util.Locale
 @Composable
 fun HomeOverlays(
     state: HomeUiState,
-    foldersTree: List<com.edu.pdf.domain.model.Folder> = emptyList(),
+    foldersTree: List<com.edu.pdf.domain.model.Folder> = emptyList(), // 🌟 Yahan add karna tha
     onAction: (HomeAction) -> Unit
 ) {
     val context = LocalContext.current
@@ -5533,13 +5878,11 @@ fun HomeOverlays(
         }
 
         is HomeSheetState.MovePicker -> {
-            HomeHierarchicalMovePickerSheet(
-                folders = foldersTree,
-                itemsBeingMoved = activeSheet.items,
+            com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
+                folders = foldersTree, // 🌟 बस ये एक लाइन ऐड करनी है!
                 onDismiss = { onAction(HomeAction.CloseSheet) },
-                onFolderSelected = { targetFolderId -> onAction(HomeAction.ConfirmMove(targetFolderId)) },
-                onLocalCreateFolder = { name, parentId ->
-                    onAction(HomeAction.CreateContextualFolder(name, parentId))
+                onTargetSelected = { targetFolderId ->
+                    onAction(HomeAction.ConfirmMove(targetFolderId))
                 }
             )
         }
@@ -5597,284 +5940,6 @@ private fun DetailRow(label: String, value: String) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HomeHierarchicalMovePickerSheet(
-    folders: List<com.edu.pdf.domain.model.Folder>,
-    itemsBeingMoved: List<HomeItem>,
-    onDismiss: () -> Unit,
-    onFolderSelected: (String?) -> Unit,
-    onLocalCreateFolder: (String, String?) -> Unit
-) {
-    var showLocalNewFolderDialog by rememberSaveable { mutableStateOf(false) }
-    var localNewFolderName by rememberSaveable { mutableStateOf("") }
-    var currentParentId by rememberSaveable { mutableStateOf<String?>(null) }
-    val haptic = LocalHapticFeedback.current
-
-    // 🌟 THE ELITE FIX: Recursive filtering to prevent Cyclic Dependencies (Logic Untouched)
-    val invalidFolderIds = remember(folders, itemsBeingMoved) {
-        val movedFolderIds = itemsBeingMoved.filterIsInstance<HomeItem.FolderItem>().map { it.folder.folderId }
-        val invalidSet = mutableSetOf<String>()
-
-        fun addWithDescendants(folderId: String) {
-            if (invalidSet.add(folderId)) {
-                folders.filter { it.parentFolderId == folderId }.forEach { child ->
-                    addWithDescendants(child.folderId)
-                }
-            }
-        }
-        movedFolderIds.forEach { addWithDescendants(it) }
-        invalidSet
-    }
-
-    val currentFolders = remember(folders, currentParentId, invalidFolderIds) {
-        folders.filter { it.parentFolderId == currentParentId && !invalidFolderIds.contains(it.folderId) }
-            .sortedBy { it.name.lowercase() }
-    }
-
-    val breadcrumbs = remember(folders, currentParentId) {
-        val list = mutableListOf<com.edu.pdf.domain.model.Folder>()
-        var curr = folders.find { it.folderId == currentParentId }
-        while (curr != null) {
-            list.add(0, curr)
-            val parentId = curr.parentFolderId
-            curr = folders.find { it.folderId == parentId }
-        }
-        list
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false // 🌟 Edge to Edge Enabled
-        )
-    ) {
-        BackHandler {
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            if (currentParentId != null) {
-                currentParentId = breadcrumbs.dropLast(1).lastOrNull()?.folderId
-            } else {
-                onDismiss()
-            }
-        }
-
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = {
-                Surface(
-                    color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f), // Slightly transparent top
-                    shadowElevation = 0.dp
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth().systemBarsPadding()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(onClick = onDismiss) {
-                                Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface)
-                            }
-                            Text(
-                                text = "Move ${itemsBeingMoved.size} item" + if (itemsBeingMoved.size > 1) "s" else "",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f).padding(start = 8.dp)
-                            )
-                            IconButton(onClick = { showLocalNewFolderDialog = true }) {
-                                Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-
-                        // 🌟 Breadcrumbs Navigation Area
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp)
-                                .padding(bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (currentParentId == null) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent,
-                                modifier = Modifier.clickable {
-                                    if (currentParentId != null) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        currentParentId = null
-                                    }
-                                }
-                            ) {
-                                Text(
-                                    text = "Home",
-                                    fontWeight = if (currentParentId == null) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (currentParentId == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                                )
-                            }
-
-                            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
-                                breadcrumbs = breadcrumbs,
-                                rootName = "", // Empty to hide extra root
-                                onNavigate = { folder ->
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    currentParentId = folder?.folderId
-                                }
-                            )
-                        }
-                    }
-                }
-            },
-            // 🌟 PRO FIX: Bottom bar hata diya! Ab button screen ke upar float karega.
-            bottomBar = {}
-        ) { paddingValues ->
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = paddingValues.calculateTopPadding())
-            ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 120.dp) // Scroll button ke piche tak jayega
-                ) {
-                    if (currentFolders.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(80.dp)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), modifier = Modifier.size(40.dp))
-                                    }
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Text("This folder is empty", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                                    Text("Tap the + icon to create a folder here", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    } else {
-                        items(currentFolders, key = { it.folderId }) { folder ->
-                            MoveFolderListItem(
-                                folder = folder,
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    currentParentId = folder.folderId
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // 🌟 WORLD-CLASS FLOATING BUTTON WITH BLUR/GRADIENT
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(
-                            androidx.compose.ui.graphics.Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
-                                    MaterialTheme.colorScheme.background
-                                )
-                            )
-                        )
-                        .padding(horizontal = 24.dp, vertical = 16.dp)
-                        .navigationBarsPadding() // Button safe area me rahega, gradient niche tak jayega
-                ) {
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onFolderSelected(currentParentId)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp), // Premium curve
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text(
-                            text = "Move Here",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
-                }
-            }
-
-            // ... Tumhara LocalNewFolderDialog ka code yahan aayega, usme koi change nahi hai ...
-            if (showLocalNewFolderDialog) {
-                val focusRequester = remember { FocusRequester() }
-                val keyboard = LocalSoftwareKeyboardController.current
-
-                LaunchedEffect(Unit) {
-                    androidx.compose.runtime.withFrameNanos { }
-                    focusRequester.requestFocus()
-                    keyboard?.show()
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .pointerInput(Unit) { detectTapGestures { /* Block clicks */ } },
-                    contentAlignment = Alignment.Center
-                ) {
-                    AlertDialog(
-                        onDismissRequest = {
-                            keyboard?.hide()
-                            showLocalNewFolderDialog = false
-                            localNewFolderName = ""
-                        },
-                        title = { Text("New Folder", fontWeight = FontWeight.Bold) },
-                        text = {
-                            OutlinedTextField(
-                                value = localNewFolderName,
-                                onValueChange = { localNewFolderName = it },
-                                label = { Text("Folder Name") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    keyboard?.hide()
-                                    if (localNewFolderName.trim().isNotEmpty()) {
-                                        onLocalCreateFolder(localNewFolderName.trim(), currentParentId)
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    }
-                                    showLocalNewFolderDialog = false
-                                    localNewFolderName = ""
-                                },
-                                enabled = localNewFolderName.trim().isNotEmpty()
-                            ) { Text("Create") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = {
-                                keyboard?.hide()
-                                showLocalNewFolderDialog = false
-                                localNewFolderName = ""
-                            }) { Text("Cancel") }
-                        },
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
-                }
-            }
-        }
-    }
-}
 ``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeScreen.kt
 ``kotlin
