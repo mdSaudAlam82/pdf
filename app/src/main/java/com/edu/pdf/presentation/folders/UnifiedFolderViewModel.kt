@@ -101,7 +101,8 @@ data class UnifiedFolderUiState(
     val textInput: String = "",
     val canCreateSubFolders: Boolean = false,
     val canImport: Boolean = false,
-    val canRenameOrDelete: Boolean = false
+    val canRenameOrDelete: Boolean = false,
+    val shouldShowBreadcrumbs: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -199,12 +200,13 @@ class UnifiedFolderViewModel @Inject constructor(
             isLoading = false,
             folders = folders,
             breadcrumbs = breadcrumbs,
-            foldersTree = tree.toImmutableList(), // 🌟 Ab tree yahan se milega
+            foldersTree = tree.toImmutableList(),
             isGridView = isGrid,
             sortType = sort,
             canCreateSubFolders = !isPhysical && !isVault,
             canImport = !isPhysical,
-            canRenameOrDelete = !isPhysical
+            canRenameOrDelete = !isPhysical,
+            shouldShowBreadcrumbs = !isPhysical // 🌟 Yahan set hoga ki Folder tab me nahi dikhana hai
         )
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
 

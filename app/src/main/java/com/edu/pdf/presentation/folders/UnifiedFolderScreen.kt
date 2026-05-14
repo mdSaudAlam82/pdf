@@ -78,7 +78,6 @@ import com.edu.pdf.presentation.home.components.UnifiedListItem
 import androidx.compose.foundation.layout.WindowInsets
 @Composable
 fun UnifiedFolderScreen(
-    showBreadcrumbsAtRoot: Boolean = true, // 🌟 PURE MVI: State ab parent se aayega
     folderId: String? = null,
     folderName: String? = null,
     folderType: FolderType? = null,
@@ -228,10 +227,7 @@ fun UnifiedFolderScreen(
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues)) {
 
-            // 🌟 PURE MVI: UI khud koi Navigation check nahi karega, sirf flag read karega
-            val shouldShowBreadcrumbs = uiState.breadcrumbs.size > 1 || showBreadcrumbsAtRoot
-
-            if (shouldShowBreadcrumbs) {
+            if (uiState.shouldShowBreadcrumbs) {
                 com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                     breadcrumbs = uiState.breadcrumbs,
                     onNavigate = { folder -> onBreadcrumbNavigate(folder) }
