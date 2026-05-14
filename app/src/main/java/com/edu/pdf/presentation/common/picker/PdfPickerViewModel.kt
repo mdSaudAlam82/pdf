@@ -90,12 +90,18 @@ class PdfPickerViewModel @Inject constructor(
                 _state.update { it.copy(selectedIds = persistentSetOf()) }
             }
             // 🌟 NAYA: UI se saara back calculation yahan aa gaya
+            // 🌟 PURE MVI ELITE FIX: 3-Stage Navigation State
             is PdfPickerAction.NavigateBack -> {
                 val currentBreadcrumbs = _state.value.breadcrumbs
                 if (currentBreadcrumbs.size > 1) {
+                    // Stage 1: Agar deep nested folder mein hain, toh ek step piche jao
                     val parentFolder = currentBreadcrumbs[currentBreadcrumbs.size - 2]
                     onAction(PdfPickerAction.NavigateToFolder(parentFolder))
+                } else if (currentBreadcrumbs.size == 1) {
+                    // Stage 2: 🚨 YAHAN THA BUG! Agar level-1 folder mein hain, toh Root (null) par aao
+                    onAction(PdfPickerAction.NavigateToFolder(null))
                 } else {
+                    // Stage 3: Agar pehle se hi Root par khade hain, tab picker ko band (Close) karo
                     onAction(PdfPickerAction.CloseSheet)
                 }
             }

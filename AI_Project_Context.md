@@ -76,6 +76,7 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |   |   |   PremiumBottomBar.kt
 |               |   |   |   PremiumBreadcrumbs.kt
 |               |   |   |   PremiumFolderComponents.kt
+|               |   |   |   SmartSelectionBottomBar.kt
 |               |   |   |   UniversalTopBar.kt
 |               |   |   |   
 |               |   |   \---picker
@@ -109,7 +110,6 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |   |   |   HomeViewModel.kt
 |               |   |   |   
 |               |   |   \---components
-|               |   |           ActionBottomBar.kt
 |               |   |           EmptyStateView.kt
 |               |   |           HomeContent.kt
 |               |   |           HomeFolderGridItem.kt
@@ -2256,12 +2256,8 @@ class ScanPdfsUseCase @Inject constructor(
 ``kotlin
 package com.edu.pdf.presentation.common
 
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Folder
@@ -2269,18 +2265,22 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavHostController
@@ -2293,20 +2293,26 @@ data class BottomNavItem<T : Any>(
     val route: T
 )
 
-// 🌟 Ye pure app (Folders, Settings) me chalega
+// 🌟 Ye Folders, Tools aur Settings me chalega
 @Composable
 fun PremiumBottomBar(navController: NavHostController) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
+    // 🌟 SLIM FIX: NavigationBar hatakar Surface lagaya gaya
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
-        windowInsets = WindowInsets(0.dp),
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding() // Edge to Edge!
     ) {
-        PremiumBottomBarItems(navController)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PremiumBottomBarItems(navController)
+        }
     }
 }
 
-// 🌟 Ye sirf Items dega jo hum HomeScreen me use karenge
+// 🌟 Ye Items dega jo hum HomeScreen (aur upar wale bar) me use karenge
 @Composable
 fun RowScope.PremiumBottomBarItems(navController: NavHostController) {
     val items = listOf(
@@ -2318,36 +2324,39 @@ fun RowScope.PremiumBottomBarItems(navController: NavHostController) {
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    val haptic = LocalHapticFeedback.current
 
     items.forEach { item ->
         val isSelected = currentDestination?.hierarchy?.any { it.hasRoute(item.route::class) } == true
-        NavigationBarItem(
-            icon = { Icon(imageVector = item.icon, contentDescription = item.title) },
-            label = { Text(text = item.title) },
-            selected = isSelected,
-            onClick = {
-                if (!isSelected) {
-                    navController.navigate(item.route) {
-                        popUpTo(Screen.Home) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
+        val color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+
+        // 🌟 Ziddi NavigationBarItem ko HATA DIYA gaya hai, ye Custom Column Slim hai!
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable {
+                    if (!isSelected) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        navController.navigate(item.route) {
+                            popUpTo(Screen.Home) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 }
-            },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = MaterialTheme.colorScheme.primary,
-                selectedTextColor = MaterialTheme.colorScheme.primary,
-                indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        )
+                .padding(vertical = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(imageVector = item.icon, contentDescription = item.title, tint = color, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = item.title, fontSize = 11.sp, color = color, fontWeight = if(isSelected) FontWeight.Bold else FontWeight.Medium)
+        }
     }
 }
 
+// Tablet UI ke liye purana code same rakha gaya hai
 @Composable
 fun PremiumNavigationRail(navController: NavHostController) {
-    // ... Tumhara purana PremiumNavigationRail wala code yahan aayega, usme koi change nahi hai
     val items = listOf(
         BottomNavItem("Home", Icons.Default.Home, Screen.Home),
         BottomNavItem("Folders", Icons.Default.Folder, Screen.Folders),
@@ -2381,7 +2390,7 @@ fun PremiumNavigationRail(navController: NavHostController) {
                 colors = NavigationRailItemDefaults.colors(
                     selectedIconColor = MaterialTheme.colorScheme.primary,
                     selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    indicatorColor = Color.Transparent,
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2404,7 +2413,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Icon
@@ -2415,9 +2424,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.edu.pdf.domain.model.Folder
@@ -2430,13 +2441,12 @@ fun PremiumBreadcrumbs(
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
-    // 🌟 ELITE FIX: Auto-Scroll State
     val listState = rememberLazyListState()
 
-    // 🌟 THE MAGIC: Jab bhi breadcrumbs ki size badhegi, ye automatically last me slide ho jayega
+    // Auto-scroll logic waisa hi powerful rakha gaya hai
     LaunchedEffect(breadcrumbs.size) {
         if (breadcrumbs.isNotEmpty()) {
-            listState.animateScrollToItem(breadcrumbs.size) // Root node (0) + breadcrumbs
+            listState.animateScrollToItem(breadcrumbs.size)
         } else {
             listState.animateScrollToItem(0)
         }
@@ -2445,13 +2455,13 @@ fun PremiumBreadcrumbs(
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        state = listState, // 🌟 State attach kar diya
+            .padding(horizontal = 16.dp, vertical = 8.dp), // 🌟 Vertical padding thodi kam ki taaki sleek lage
+        state = listState,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 1. Root Node (e.g., Home)
         item {
-            BreadcrumbPill(
+            EliteBreadcrumbItem(
                 name = rootName,
                 isLast = breadcrumbs.isEmpty(),
                 onClick = {
@@ -2468,12 +2478,12 @@ fun PremiumBreadcrumbs(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                modifier = Modifier.padding(horizontal = 4.dp).size(18.dp),
+                modifier = Modifier.padding(horizontal = 4.dp).size(16.dp), // 🌟 Icon thoda chota kiya for premium look
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
             )
 
             val isLast = folder == breadcrumbs.last()
-            BreadcrumbPill(
+            EliteBreadcrumbItem(
                 name = folder.name,
                 isLast = isLast,
                 onClick = {
@@ -2488,20 +2498,28 @@ fun PremiumBreadcrumbs(
 }
 
 @Composable
-private fun BreadcrumbPill(name: String, isLast: Boolean, onClick: () -> Unit) {
-    val bgColor = if (isLast) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    val textColor = if (isLast) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+private fun EliteBreadcrumbItem(name: String, isLast: Boolean, onClick: () -> Unit) {
+    // 🌟 THE MAGIC: Purane folders transparent honge, sirf current folder highlight hoga
+    val bgColor = if (isLast) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    val textColor = if (isLast) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     val fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium
 
     Box(
         modifier = Modifier
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(8.dp)) // 🌟 Modern soft rectangle shape
             .background(bgColor)
             .clickable(enabled = !isLast, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = if (isLast) 12.dp else 6.dp, vertical = 6.dp), // 🌟 Dynamic padding
         contentAlignment = Alignment.Center
     ) {
-        Text(text = name, color = textColor, fontWeight = fontWeight, fontSize = 16.sp)
+        Text(
+            text = name,
+            color = textColor,
+            fontWeight = fontWeight,
+            fontSize = 14.sp, // 🌟 Sleek professional size
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis // 🌟 Lamba naam hone par '...' dikhayega
+        )
     }
 }
 ``n
@@ -2620,6 +2638,158 @@ fun PremiumFolderListItem(
     }
 }
 ``n
+### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\SmartSelectionBottomBar.kt
+``kotlin
+package com.edu.pdf.presentation.common
+
+import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CallMerge
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
+import androidx.compose.material.icons.filled.BookmarkRemove
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.HistoryToggleOff
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.edu.pdf.domain.model.HomeItem
+
+@Composable
+fun SmartSelectionBottomBar(
+    selectedItems: List<HomeItem>,
+    tabIndex: Int,
+    onDelete: () -> Unit,
+    onMove: () -> Unit,
+    onMerge: () -> Unit,
+    onShare: () -> Unit,
+    onRemoveFromRecent: () -> Unit,
+    onUnfavorite: () -> Unit
+) {
+    // 🌟 STRICT MVI: Logic yahin calculate hoga (Single Source of Truth)
+    val folderCount = selectedItems.count { it is HomeItem.FolderItem }
+    val pdfCount = selectedItems.count { it is HomeItem.PdfItem }
+    val totalCount = selectedItems.size
+    val hasFolderSelected = folderCount > 0
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding() // Edge-to-Edge, no fixed height
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            // 1. DELETE
+            SmartActionItem(
+                title = "Delete",
+                icon = Icons.Default.Delete,
+                enabled = totalCount > 0,
+                disabledMessage = "Select items to delete",
+                onClick = onDelete
+            )
+
+            // 2. CONTEXTUAL MIDDLE BUTTON
+            when (tabIndex) {
+                0 -> SmartActionItem(
+                    title = "Remove",
+                    icon = Icons.Default.HistoryToggleOff,
+                    enabled = totalCount > 0,
+                    disabledMessage = "Select items to remove",
+                    onClick = onRemoveFromRecent
+                )
+                1 -> SmartActionItem(
+                    title = "Move",
+                    icon = Icons.AutoMirrored.Filled.DriveFileMove,
+                    enabled = totalCount > 0,
+                    disabledMessage = "Select items to move",
+                    onClick = onMove
+                )
+                2 -> SmartActionItem(
+                    title = "Unfavorite",
+                    icon = Icons.Default.BookmarkRemove,
+                    enabled = totalCount > 0,
+                    disabledMessage = "Select items to unfavorite",
+                    onClick = onUnfavorite
+                )
+            }
+
+            // 3. MERGE (Smart Logic)
+            val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
+            val mergeMsg = if (hasFolderSelected) "Cannot merge folders" else "Select at least 2 PDFs to merge"
+            SmartActionItem(
+                title = "Merge",
+                icon = Icons.AutoMirrored.Filled.CallMerge,
+                enabled = mergeEnabled,
+                disabledMessage = mergeMsg,
+                onClick = onMerge
+            )
+
+            // 4. SHARE (Smart Logic)
+            val shareEnabled = totalCount > 0 && !hasFolderSelected
+            val shareMsg = if (hasFolderSelected) "Cannot share folders" else "Select PDFs to share"
+            SmartActionItem(
+                title = "Share",
+                icon = Icons.Default.Share,
+                enabled = shareEnabled,
+                disabledMessage = shareMsg,
+                onClick = onShare
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.SmartActionItem(
+    title: String,
+    icon: ImageVector,
+    enabled: Boolean,
+    disabledMessage: String,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+
+    val animatedColor by animateColorAsState(
+        targetValue = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+        animationSpec = tween(durationMillis = 300),
+        label = "ColorAnimation_$title"
+    )
+
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .clickable {
+                if (enabled) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                } else {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    Toast.makeText(context, disabledMessage, Toast.LENGTH_SHORT).show()
+                }
+            }
+            .padding(vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = title, tint = animatedColor, modifier = Modifier.size(24.dp))
+        Text(text = title, fontSize = 11.sp, color = animatedColor, fontWeight = FontWeight.Medium)
+    }
+}
+``n
 ### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\UniversalTopBar.kt
 ``kotlin
 package com.edu.pdf.presentation.common
@@ -2681,11 +2851,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets // 🌟 ADDED
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding // 🌟 ADDED
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -2694,12 +2864,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -2915,7 +3083,8 @@ private fun PickerPdfRow(pdf: com.edu.pdf.domain.model.PdfFile, searchQuery: Str
             Text("$displayDate  •  $displaySize", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(
-            imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
+            // 🌟 CONSISTENCY FIX: Yahan bhi Square checkbox aayega
+            imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
             contentDescription = null,
             tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.size(24.dp)
@@ -3616,7 +3785,6 @@ fun MainAppScreen() {
 }
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-// 🌟 FIX 2: Function signature mein 'isTablet: Boolean' add kiya
 fun NavGraphBuilder.homeSection(navController: NavHostController, isTablet: Boolean) {
     composable<Screen.Home> {
         val paneNavigator = rememberListDetailPaneScaffoldNavigator<Any>()
@@ -3653,6 +3821,7 @@ fun NavGraphBuilder.homeSection(navController: NavHostController, isTablet: Bool
                 if (folderArgs != null) {
                     androidx.compose.runtime.key(folderArgs.folderId) {
                         UnifiedFolderScreen(
+                            showBreadcrumbsAtRoot = true, // Home tab se aaya hai, isliye hamesha dikhao
                             folderId = folderArgs.folderId,
                             folderName = folderArgs.folderName,
                             folderType = folderArgs.folderType,
@@ -3743,9 +3912,15 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController, isTablet: B
         popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(350)) }
     ) { backStackEntry ->
         val args = backStackEntry.toRoute<Screen.UnifiedFolder>()
+
+        // 🌟 MVI NAVIGATION LOGIC: Origin check Navigation graph me hoga, UI me nahi!
+        val previousRoute = navController.previousBackStackEntry?.destination?.route ?: ""
+        val isFromFoldersTab = previousRoute.contains("Folders", ignoreCase = true)
+
         UnifiedFolderScreen(
-            folderId = args.folderId,         // 🌟 FIX: Id pass ki
-            folderName = args.folderName,     // 🌟 FIX: Name pass ki
+            showBreadcrumbsAtRoot = !isFromFoldersTab, // Agar Folders tab se nahi hai, to root par dikhao
+            folderId = args.folderId,
+            folderName = args.folderName,
             folderType = args.folderType,
             onBack = { navController.popBackStack() },
             onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },
@@ -4647,13 +4822,13 @@ import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.home.HomeAction
-import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
 import com.edu.pdf.presentation.home.components.UnifiedListItem
-
+import androidx.compose.foundation.layout.WindowInsets
 @Composable
 fun UnifiedFolderScreen(
+    showBreadcrumbsAtRoot: Boolean = true, // 🌟 PURE MVI: State ab parent se aayega
     folderId: String? = null,
     folderName: String? = null,
     folderType: FolderType? = null,
@@ -4736,6 +4911,7 @@ fun UnifiedFolderScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             if (isSelectionMode) {
                 // 🌟 STEP 1: UI Maths yahin calculate karo
@@ -4760,7 +4936,8 @@ fun UnifiedFolderScreen(
                     title = uiState.folderName,
                     isGridView = uiState.isGridView,
                     canCreateSubFolders = uiState.canCreateSubFolders,
-                    onBackClick = onBack,
+                    // 🌟 PURE MVI & ELITE FIX: 'X' dabane par direct root par jump karo!
+                    onBackClick = { onBreadcrumbNavigate(null) },
                     onAddFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
                     onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                     onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
@@ -4775,9 +4952,10 @@ fun UnifiedFolderScreen(
         },
         bottomBar = {
             if (isSelectionMode) {
-                ActionBottomBar(
+                // 🌟 ELITE FIX: Yahan bhi hamara naya Master Bar lag gaya! Ekdum clean.
+                com.edu.pdf.presentation.common.SmartSelectionBottomBar(
                     selectedItems = selectedItems,
-                    tabIndex = 1,
+                    tabIndex = 1, // Folders hamesha Move behavior use karte hain
                     onDelete = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DeleteConfirm(selectedItems))) },
                     onMove = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.MovePicker(selectedItems))) },
                     onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
@@ -4800,7 +4978,10 @@ fun UnifiedFolderScreen(
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues)) {
 
-            if (uiState.breadcrumbs.isNotEmpty()) {
+            // 🌟 PURE MVI: UI khud koi Navigation check nahi karega, sirf flag read karega
+            val shouldShowBreadcrumbs = uiState.breadcrumbs.size > 1 || showBreadcrumbsAtRoot
+
+            if (shouldShowBreadcrumbs) {
                 com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                     breadcrumbs = uiState.breadcrumbs,
                     onNavigate = { folder -> onBreadcrumbNavigate(folder) }
@@ -5463,6 +5644,7 @@ fun VaultScreenPure(
     val haptic = LocalHapticFeedback.current
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             TopAppBar(
                 title = { Text("Private Vault", fontWeight = FontWeight.Bold) },
@@ -6131,7 +6313,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -6142,8 +6323,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
@@ -6179,7 +6360,6 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBarItems
 import com.edu.pdf.presentation.common.UniversalTopBar
-import com.edu.pdf.presentation.home.components.ActionBottomBarItems
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
@@ -6371,49 +6551,46 @@ fun HomeScreenPure(
         },
         bottomBar = {
             if (isSelectionMode || !isTablet) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                    windowInsets = WindowInsets(0.dp),
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
-                ) {
-                    androidx.compose.animation.AnimatedContent(
-                        targetState = isSelectionMode,
-                        label = "IconSwapAnimation"
-                    ) { selectionActive ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (selectionActive) {
-                                val selectedIdsSet by remember(selectedPdfs) { derivedStateOf { selectedPdfs.toSet() } }
-                                val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                                    derivedStateOf { if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet } }
-                                }
+                androidx.compose.animation.AnimatedContent(
+                    targetState = isSelectionMode,
+                    label = "BottomBarSwapAnimation"
+                ) { selectionActive ->
+                    if (selectionActive) {
+                        val selectedIdsSet by remember(selectedPdfs) { derivedStateOf { selectedPdfs.toSet() } }
+                        val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
+                            derivedStateOf { if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet } }
+                        }
 
-                                ActionBottomBarItems(
-                                    selectedItems = selectedItemsList,
-                                    tabIndex = currentTab,
-                                    onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                                    onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                                    onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                                    onShare = {
-                                        val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                                        if (pdfUris.isNotEmpty()) {
-                                            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                                type = "application/pdf"
-                                                putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            }
-                                            context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                                        }
-                                    },
-                                    onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                                    onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                                )
-                            } else {
-                                if (!isTablet) {
+                        // 🌟 ELITE FIX: Hamara naya Master Bar! (No extra NavigationBar wrapper needed)
+                        com.edu.pdf.presentation.common.SmartSelectionBottomBar(
+                            selectedItems = selectedItemsList,
+                            tabIndex = currentTab,
+                            onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                            onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                            onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                            onShare = {
+                                val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                                if (pdfUris.isNotEmpty()) {
+                                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                        type = "application/pdf"
+                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                                }
+                            },
+                            onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                            onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                        )
+                    } else {
+                        if (!isTablet) {
+                            // 🌟 NORMAL APP BAR: Iske andar already height 72dp aur padding set hai
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 0.dp,
+                                modifier = Modifier.fillMaxWidth().navigationBarsPadding()
+                            ) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                                     PremiumBottomBarItems(navController = navController)
                                 }
                             }
@@ -6827,143 +7004,6 @@ class HomeViewModel @Inject constructor(
                 }
             }
         }
-    }
-}
-``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\ActionBottomBar.kt
-``kotlin
-package com.edu.pdf.presentation.home.components
-
-import android.widget.Toast
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.CallMerge
-import androidx.compose.material.icons.automirrored.filled.DriveFileMove
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.edu.pdf.domain.model.HomeItem
-import androidx.compose.ui.res.stringResource
-import com.edu.pdf.R
-
-@Composable
-fun RowScope.ActionBottomBarItems(
-    selectedItems: List<HomeItem>,
-    tabIndex: Int,
-    onDelete: () -> Unit,
-    onMove: () -> Unit,
-    onMerge: () -> Unit,
-    onShare: () -> Unit,
-    onRemoveFromRecent: () -> Unit,
-    onUnfavorite: () -> Unit
-) {
-    val folderCount = selectedItems.count { it is HomeItem.FolderItem }
-    val pdfCount = selectedItems.count { it is HomeItem.PdfItem }
-    val totalCount = selectedItems.size
-    val hasFolderSelected = folderCount > 0
-
-    ActionItem(
-        title = stringResource(R.string.action_delete),
-        icon = Icons.Default.Delete,
-        enabled = totalCount > 0,
-        disabledMessage = stringResource(R.string.msg_select_delete),
-        onClick = onDelete
-    )
-
-    when (tabIndex) {
-        0 -> ActionItem(
-            title = stringResource(R.string.action_remove),
-            icon = Icons.Default.HistoryToggleOff,
-            enabled = totalCount > 0,
-            disabledMessage = stringResource(R.string.msg_select_remove),
-            onClick = onRemoveFromRecent
-        )
-        1 -> ActionItem(
-            title = stringResource(R.string.action_move),
-            icon = Icons.AutoMirrored.Filled.DriveFileMove,
-            enabled = totalCount > 0,
-            disabledMessage = stringResource(R.string.msg_select_move),
-            onClick = onMove
-        )
-        2 -> ActionItem(
-            title = stringResource(R.string.action_unfav),
-            icon = Icons.Default.BookmarkRemove,
-            enabled = totalCount > 0,
-            disabledMessage = stringResource(R.string.msg_select_unfav),
-            onClick = onUnfavorite
-        )
-    }
-
-    val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
-    val mergeMsg = if (hasFolderSelected) stringResource(R.string.msg_no_merge_folder) else stringResource(R.string.msg_select_2_pdf)
-
-    ActionItem(
-        title = stringResource(R.string.action_merge),
-        icon = Icons.AutoMirrored.Filled.CallMerge,
-        enabled = mergeEnabled,
-        disabledMessage = mergeMsg,
-        onClick = onMerge
-    )
-
-    val shareEnabled = totalCount > 0 && !hasFolderSelected
-    val shareMsg = if (hasFolderSelected) stringResource(R.string.msg_no_share_folder) else stringResource(R.string.msg_select_pdf_share)
-
-    ActionItem(
-        title = stringResource(R.string.action_share),
-        icon = Icons.Default.Share,
-        enabled = shareEnabled,
-        disabledMessage = shareMsg,
-        onClick = onShare
-    )
-}
-
-@Composable
-private fun RowScope.ActionItem(
-    title: String,
-    icon: ImageVector,
-    enabled: Boolean,
-    disabledMessage: String,
-    onClick: () -> Unit
-) {
-    val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-
-    val animatedColor by animateColorAsState(
-        targetValue = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-        animationSpec = tween(durationMillis = 300),
-        label = "ColorAnimation_$title"
-    )
-
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .clickable {
-                if (enabled) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onClick()
-                } else {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    Toast.makeText(context, disabledMessage, Toast.LENGTH_SHORT).show()
-                }
-            }
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(icon, contentDescription = title, tint = animatedColor, modifier = Modifier.size(24.dp))
-        Text(text = title, fontSize = 11.sp, color = animatedColor, fontWeight = FontWeight.Medium)
     }
 }
 ``n
@@ -7572,10 +7612,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -7605,7 +7643,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -7627,7 +7664,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.domain.model.PdfFile
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -7648,7 +7684,7 @@ fun PdfActionBottomSheet(
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
+    rememberCoroutineScope()
 
     val currentLocale = LocalConfiguration.current.locales.get(0)
     val sdf = SimpleDateFormat("dd MMM yyyy, hh:mm a", currentLocale)
@@ -7881,41 +7917,7 @@ fun RowScope.QuickActionButton(title: String, icon: ImageVector, onClick: () -> 
         Text(text = title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
     }
 }
-@Composable
-fun ActionBottomBar(
-    selectedItems: List<HomeItem>,
-    tabIndex: Int,
-    onDelete: () -> Unit,
-    onMove: () -> Unit,
-    onMerge: () -> Unit,
-    onShare: () -> Unit,
-    onRemoveFromRecent: () -> Unit,
-    onUnfavorite: () -> Unit
-) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        windowInsets = WindowInsets(0.dp),
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ActionBottomBarItems(
-                selectedItems = selectedItems,
-                tabIndex = tabIndex,
-                onDelete = onDelete,
-                onMove = onMove,
-                onMerge = onMerge,
-                onShare = onShare,
-                onRemoveFromRecent = onRemoveFromRecent,
-                onUnfavorite = onUnfavorite
-            )
-        }
-    }
-}
+
 @Composable
 fun DetailRow(label: String, value: String) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -8075,14 +8077,27 @@ import android.text.format.Formatter
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.outlined.Circle
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -8161,7 +8176,8 @@ fun PdfListItem(
 
         if (isSelectionMode) {
             Icon(
-                imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
+                // 🌟 PURE UI CONSISTENCY: Circle hata kar hamesha Square (CheckBox) dikhega
+                imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
                 contentDescription = null,
                 tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                 modifier = Modifier.size(24.dp)

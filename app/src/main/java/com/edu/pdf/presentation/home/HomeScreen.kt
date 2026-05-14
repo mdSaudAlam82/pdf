@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,8 +25,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
@@ -63,7 +62,6 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBarItems
 import com.edu.pdf.presentation.common.UniversalTopBar
-import com.edu.pdf.presentation.home.components.ActionBottomBarItems
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
@@ -255,49 +253,46 @@ fun HomeScreenPure(
         },
         bottomBar = {
             if (isSelectionMode || !isTablet) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                    windowInsets = WindowInsets(0.dp),
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
-                ) {
-                    androidx.compose.animation.AnimatedContent(
-                        targetState = isSelectionMode,
-                        label = "IconSwapAnimation"
-                    ) { selectionActive ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (selectionActive) {
-                                val selectedIdsSet by remember(selectedPdfs) { derivedStateOf { selectedPdfs.toSet() } }
-                                val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                                    derivedStateOf { if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet } }
-                                }
+                androidx.compose.animation.AnimatedContent(
+                    targetState = isSelectionMode,
+                    label = "BottomBarSwapAnimation"
+                ) { selectionActive ->
+                    if (selectionActive) {
+                        val selectedIdsSet by remember(selectedPdfs) { derivedStateOf { selectedPdfs.toSet() } }
+                        val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
+                            derivedStateOf { if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet } }
+                        }
 
-                                ActionBottomBarItems(
-                                    selectedItems = selectedItemsList,
-                                    tabIndex = currentTab,
-                                    onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                                    onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                                    onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                                    onShare = {
-                                        val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                                        if (pdfUris.isNotEmpty()) {
-                                            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                                type = "application/pdf"
-                                                putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            }
-                                            context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                                        }
-                                    },
-                                    onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                                    onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                                )
-                            } else {
-                                if (!isTablet) {
+                        // 🌟 ELITE FIX: Hamara naya Master Bar! (No extra NavigationBar wrapper needed)
+                        com.edu.pdf.presentation.common.SmartSelectionBottomBar(
+                            selectedItems = selectedItemsList,
+                            tabIndex = currentTab,
+                            onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                            onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                            onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                            onShare = {
+                                val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                                if (pdfUris.isNotEmpty()) {
+                                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                        type = "application/pdf"
+                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                                }
+                            },
+                            onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                            onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                        )
+                    } else {
+                        if (!isTablet) {
+                            // 🌟 NORMAL APP BAR: Iske andar already height 72dp aur padding set hai
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 0.dp,
+                                modifier = Modifier.fillMaxWidth().navigationBarsPadding()
+                            ) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                                     PremiumBottomBarItems(navController = navController)
                                 }
                             }

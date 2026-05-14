@@ -72,13 +72,13 @@ import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.home.HomeAction
-import com.edu.pdf.presentation.home.components.ActionBottomBar
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
 import com.edu.pdf.presentation.home.components.UnifiedListItem
-
+import androidx.compose.foundation.layout.WindowInsets
 @Composable
 fun UnifiedFolderScreen(
+    showBreadcrumbsAtRoot: Boolean = true, // 🌟 PURE MVI: State ab parent se aayega
     folderId: String? = null,
     folderName: String? = null,
     folderType: FolderType? = null,
@@ -161,6 +161,7 @@ fun UnifiedFolderScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             if (isSelectionMode) {
                 // 🌟 STEP 1: UI Maths yahin calculate karo
@@ -185,7 +186,8 @@ fun UnifiedFolderScreen(
                     title = uiState.folderName,
                     isGridView = uiState.isGridView,
                     canCreateSubFolders = uiState.canCreateSubFolders,
-                    onBackClick = onBack,
+                    // 🌟 PURE MVI & ELITE FIX: 'X' dabane par direct root par jump karo!
+                    onBackClick = { onBreadcrumbNavigate(null) },
                     onAddFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
                     onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                     onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
@@ -200,9 +202,10 @@ fun UnifiedFolderScreen(
         },
         bottomBar = {
             if (isSelectionMode) {
-                ActionBottomBar(
+                // 🌟 ELITE FIX: Yahan bhi hamara naya Master Bar lag gaya! Ekdum clean.
+                com.edu.pdf.presentation.common.SmartSelectionBottomBar(
                     selectedItems = selectedItems,
-                    tabIndex = 1,
+                    tabIndex = 1, // Folders hamesha Move behavior use karte hain
                     onDelete = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DeleteConfirm(selectedItems))) },
                     onMove = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.MovePicker(selectedItems))) },
                     onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
@@ -225,7 +228,10 @@ fun UnifiedFolderScreen(
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues)) {
 
-            if (uiState.breadcrumbs.isNotEmpty()) {
+            // 🌟 PURE MVI: UI khud koi Navigation check nahi karega, sirf flag read karega
+            val shouldShowBreadcrumbs = uiState.breadcrumbs.size > 1 || showBreadcrumbsAtRoot
+
+            if (shouldShowBreadcrumbs) {
                 com.edu.pdf.presentation.common.PremiumBreadcrumbs(
                     breadcrumbs = uiState.breadcrumbs,
                     onNavigate = { folder -> onBreadcrumbNavigate(folder) }

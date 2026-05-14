@@ -151,6 +151,7 @@ fun NavGraphBuilder.homeSection(navController: NavHostController, isTablet: Bool
                 if (folderArgs != null) {
                     androidx.compose.runtime.key(folderArgs.folderId) {
                         UnifiedFolderScreen(
+                            showBreadcrumbsAtRoot = true, // Home tab se aaya hai, isliye hamesha dikhao
                             folderId = folderArgs.folderId,
                             folderName = folderArgs.folderName,
                             folderType = folderArgs.folderType,
@@ -241,9 +242,15 @@ fun NavGraphBuilder.foldersSection(navController: NavHostController, isTablet: B
         popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(350)) }
     ) { backStackEntry ->
         val args = backStackEntry.toRoute<Screen.UnifiedFolder>()
+
+        // 🌟 MVI NAVIGATION LOGIC: Origin check Navigation graph me hoga, UI me nahi!
+        val previousRoute = navController.previousBackStackEntry?.destination?.route ?: ""
+        val isFromFoldersTab = previousRoute.contains("Folders", ignoreCase = true)
+
         UnifiedFolderScreen(
-            folderId = args.folderId,         // 🌟 FIX: Id pass ki
-            folderName = args.folderName,     // 🌟 FIX: Name pass ki
+            showBreadcrumbsAtRoot = !isFromFoldersTab, // Agar Folders tab se nahi hai, to root par dikhao
+            folderId = args.folderId,
+            folderName = args.folderName,
             folderType = args.folderType,
             onBack = { navController.popBackStack() },
             onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) },

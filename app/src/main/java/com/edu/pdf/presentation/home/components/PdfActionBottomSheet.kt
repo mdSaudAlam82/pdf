@@ -17,10 +17,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -72,7 +69,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.domain.model.PdfFile
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -93,7 +89,7 @@ fun PdfActionBottomSheet(
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
+    rememberCoroutineScope()
 
     val currentLocale = LocalConfiguration.current.locales.get(0)
     val sdf = SimpleDateFormat("dd MMM yyyy, hh:mm a", currentLocale)
@@ -326,41 +322,7 @@ fun RowScope.QuickActionButton(title: String, icon: ImageVector, onClick: () -> 
         Text(text = title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
     }
 }
-@Composable
-fun ActionBottomBar(
-    selectedItems: List<HomeItem>,
-    tabIndex: Int,
-    onDelete: () -> Unit,
-    onMove: () -> Unit,
-    onMerge: () -> Unit,
-    onShare: () -> Unit,
-    onRemoveFromRecent: () -> Unit,
-    onUnfavorite: () -> Unit
-) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        windowInsets = WindowInsets(0.dp),
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ActionBottomBarItems(
-                selectedItems = selectedItems,
-                tabIndex = tabIndex,
-                onDelete = onDelete,
-                onMove = onMove,
-                onMerge = onMerge,
-                onShare = onShare,
-                onRemoveFromRecent = onRemoveFromRecent,
-                onUnfavorite = onUnfavorite
-            )
-        }
-    }
-}
+
 @Composable
 fun DetailRow(label: String, value: String) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {

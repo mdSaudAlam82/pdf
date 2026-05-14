@@ -87,6 +87,7 @@ fun VaultScreenPure(
     val haptic = LocalHapticFeedback.current
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             TopAppBar(
                 title = { Text("Private Vault", fontWeight = FontWeight.Bold) },

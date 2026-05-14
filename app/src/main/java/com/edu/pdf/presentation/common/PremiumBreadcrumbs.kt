@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Icon
@@ -21,9 +21,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.edu.pdf.domain.model.Folder
@@ -36,13 +38,12 @@ fun PremiumBreadcrumbs(
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
-    // 🌟 ELITE FIX: Auto-Scroll State
     val listState = rememberLazyListState()
 
-    // 🌟 THE MAGIC: Jab bhi breadcrumbs ki size badhegi, ye automatically last me slide ho jayega
+    // Auto-scroll logic waisa hi powerful rakha gaya hai
     LaunchedEffect(breadcrumbs.size) {
         if (breadcrumbs.isNotEmpty()) {
-            listState.animateScrollToItem(breadcrumbs.size) // Root node (0) + breadcrumbs
+            listState.animateScrollToItem(breadcrumbs.size)
         } else {
             listState.animateScrollToItem(0)
         }
@@ -51,13 +52,13 @@ fun PremiumBreadcrumbs(
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        state = listState, // 🌟 State attach kar diya
+            .padding(horizontal = 16.dp, vertical = 8.dp), // 🌟 Vertical padding thodi kam ki taaki sleek lage
+        state = listState,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 1. Root Node (e.g., Home)
         item {
-            BreadcrumbPill(
+            EliteBreadcrumbItem(
                 name = rootName,
                 isLast = breadcrumbs.isEmpty(),
                 onClick = {
@@ -74,12 +75,12 @@ fun PremiumBreadcrumbs(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                modifier = Modifier.padding(horizontal = 4.dp).size(18.dp),
+                modifier = Modifier.padding(horizontal = 4.dp).size(16.dp), // 🌟 Icon thoda chota kiya for premium look
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
             )
 
             val isLast = folder == breadcrumbs.last()
-            BreadcrumbPill(
+            EliteBreadcrumbItem(
                 name = folder.name,
                 isLast = isLast,
                 onClick = {
@@ -94,19 +95,27 @@ fun PremiumBreadcrumbs(
 }
 
 @Composable
-private fun BreadcrumbPill(name: String, isLast: Boolean, onClick: () -> Unit) {
-    val bgColor = if (isLast) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    val textColor = if (isLast) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+private fun EliteBreadcrumbItem(name: String, isLast: Boolean, onClick: () -> Unit) {
+    // 🌟 THE MAGIC: Purane folders transparent honge, sirf current folder highlight hoga
+    val bgColor = if (isLast) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    val textColor = if (isLast) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     val fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium
 
     Box(
         modifier = Modifier
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(8.dp)) // 🌟 Modern soft rectangle shape
             .background(bgColor)
             .clickable(enabled = !isLast, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = if (isLast) 12.dp else 6.dp, vertical = 6.dp), // 🌟 Dynamic padding
         contentAlignment = Alignment.Center
     ) {
-        Text(text = name, color = textColor, fontWeight = fontWeight, fontSize = 16.sp)
+        Text(
+            text = name,
+            color = textColor,
+            fontWeight = fontWeight,
+            fontSize = 14.sp, // 🌟 Sleek professional size
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis // 🌟 Lamba naam hone par '...' dikhayega
+        )
     }
 }

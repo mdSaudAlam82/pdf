@@ -1,11 +1,7 @@
 package com.edu.pdf.presentation.common
 
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Folder
@@ -13,18 +9,22 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavHostController
@@ -37,20 +37,26 @@ data class BottomNavItem<T : Any>(
     val route: T
 )
 
-// 🌟 Ye pure app (Folders, Settings) me chalega
+// 🌟 Ye Folders, Tools aur Settings me chalega
 @Composable
 fun PremiumBottomBar(navController: NavHostController) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
+    // 🌟 SLIM FIX: NavigationBar hatakar Surface lagaya gaya
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
-        windowInsets = WindowInsets(0.dp),
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp)
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding() // Edge to Edge!
     ) {
-        PremiumBottomBarItems(navController)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PremiumBottomBarItems(navController)
+        }
     }
 }
 
-// 🌟 Ye sirf Items dega jo hum HomeScreen me use karenge
+// 🌟 Ye Items dega jo hum HomeScreen (aur upar wale bar) me use karenge
 @Composable
 fun RowScope.PremiumBottomBarItems(navController: NavHostController) {
     val items = listOf(
@@ -62,36 +68,39 @@ fun RowScope.PremiumBottomBarItems(navController: NavHostController) {
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    val haptic = LocalHapticFeedback.current
 
     items.forEach { item ->
         val isSelected = currentDestination?.hierarchy?.any { it.hasRoute(item.route::class) } == true
-        NavigationBarItem(
-            icon = { Icon(imageVector = item.icon, contentDescription = item.title) },
-            label = { Text(text = item.title) },
-            selected = isSelected,
-            onClick = {
-                if (!isSelected) {
-                    navController.navigate(item.route) {
-                        popUpTo(Screen.Home) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
+        val color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+
+        // 🌟 Ziddi NavigationBarItem ko HATA DIYA gaya hai, ye Custom Column Slim hai!
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable {
+                    if (!isSelected) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        navController.navigate(item.route) {
+                            popUpTo(Screen.Home) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 }
-            },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = MaterialTheme.colorScheme.primary,
-                selectedTextColor = MaterialTheme.colorScheme.primary,
-                indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        )
+                .padding(vertical = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(imageVector = item.icon, contentDescription = item.title, tint = color, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = item.title, fontSize = 11.sp, color = color, fontWeight = if(isSelected) FontWeight.Bold else FontWeight.Medium)
+        }
     }
 }
 
+// Tablet UI ke liye purana code same rakha gaya hai
 @Composable
 fun PremiumNavigationRail(navController: NavHostController) {
-    // ... Tumhara purana PremiumNavigationRail wala code yahan aayega, usme koi change nahi hai
     val items = listOf(
         BottomNavItem("Home", Icons.Default.Home, Screen.Home),
         BottomNavItem("Folders", Icons.Default.Folder, Screen.Folders),
@@ -125,7 +134,7 @@ fun PremiumNavigationRail(navController: NavHostController) {
                 colors = NavigationRailItemDefaults.colors(
                     selectedIconColor = MaterialTheme.colorScheme.primary,
                     selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    indicatorColor = Color.Transparent,
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
