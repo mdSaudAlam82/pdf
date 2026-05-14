@@ -41,8 +41,8 @@ class PdfThumbnailFetcher(
         val cacheFolder = File(context.cacheDir, "smart_pdf_thumbnails")
         if (!cacheFolder.exists()) cacheFolder.mkdirs()
 
-        // 🌟 THE ELITE FIX: UUID का इस्तेमाल करें ताकि दुनिया की कोई भी दो PDF का नाम कभी सेम न हो सके!
-        val uniqueId = java.util.UUID.nameUUIDFromBytes(pdf.id.toByteArray()).toString()
+        // 🌟 THE ELITE FIX: ID aur LastModified dono use karo, taaki PDF edit hone par Thumbnail turant update ho jaye!
+        val uniqueId = java.util.UUID.nameUUIDFromBytes((pdf.id + pdf.lastModified).toByteArray()).toString()
         val thumbFileName = "$uniqueId.webp"
         val cachedThumbFile = File(cacheFolder, thumbFileName)
 

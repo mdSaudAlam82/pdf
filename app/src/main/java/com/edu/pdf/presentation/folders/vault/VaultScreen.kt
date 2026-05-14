@@ -121,9 +121,11 @@ fun VaultScreenPure(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (state.vaultPdfs.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Vault is empty", color = Color.Gray)
-                }
+                // 🌟 ELITE FIX: Boring text ki jagah premium EmptyStateView laga diya
+                com.edu.pdf.presentation.home.components.EmptyStateView(
+                    title = "Vault is Locked & Empty",
+                    subtitle = "Click the '+' icon above to securely hide your private PDFs here."
+                )
             } else {
                 if (state.isGridView) {
                     LazyVerticalGrid(

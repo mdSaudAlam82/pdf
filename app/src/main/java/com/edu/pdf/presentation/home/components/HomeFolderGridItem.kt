@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -63,11 +62,10 @@ fun HomeFolderGridItem(
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
             contentAlignment = Alignment.Center
         ) {
-            // Folder Icon exactly like FolderListItem
-            Icon(
-                imageVector = Icons.Default.Folder,
+            // 🌟 PREMIUM 3D FOLDER IMAGE
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = com.edu.pdf.R.drawable.premium_folder1),
                 contentDescription = "Folder",
-                tint = MaterialTheme.colorScheme.tertiary, // Classic Yellow Folder
                 modifier = Modifier.size(64.dp)
             )
         }

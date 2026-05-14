@@ -1,12 +1,19 @@
 package com.edu.pdf.presentation.home.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FolderOff
-import androidx.compose.material3.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,21 +35,14 @@ fun EmptyStateView(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
+        // 🌟 PREMIUM EMPTY STATE ILLUSTRATION
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(id = com.edu.pdf.R.drawable.empty_state_illustration), // Yahan photo ka naam hai
+            contentDescription = "Empty State",
             modifier = Modifier
-                .fillMaxWidth(0.3f)
-                .aspectRatio(1f)
-                // 🌟 PREMIUM TINT: Perfect 8% opacity of the exact Brand Red
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.FolderOff,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(0.5f),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        }
+                .fillMaxWidth(0.55f) // 🌟 Photo kitni badi dikhani hai (55% of screen width)
+                .aspectRatio(1f) // Square shape maintain rakhega
+        )
 
         Spacer(modifier = Modifier.height(24.dp))
 

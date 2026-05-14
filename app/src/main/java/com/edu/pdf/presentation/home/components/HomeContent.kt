@@ -66,7 +66,11 @@ fun HomeContent(
                 // 🌟 MVI STRICT FIX: All Files (Page 1) me ab Paging use hoga
                 if (page == 1) {
                     if (state.currentFolders.isEmpty() && pagedPdfs.itemCount == 0) {
-                        EmptyStateView(title = "No Items Here", subtitle = "Start by creating a folder or adding PDFs.")
+                        // 🌟 PREMIUM TEXT FOR 'ALL FILES'
+                        EmptyStateView(
+                            title = "Your Workspace is Empty",
+                            subtitle = "Start building your library. Import PDFs or create folders to get organized."
+                        )
                     } else {
                         if (state.isGridView) {
                             key(state.sortType) {
@@ -108,7 +112,18 @@ fun HomeContent(
                     val currentList = if (page == 0) state.recentItems else state.favoritePdfs.map { HomeItem.PdfItem(it) }
 
                     if (currentList.isEmpty()) {
-                        EmptyStateView(title = "No Items Here", subtitle = "Start by creating a folder or adding PDFs.")
+                        // 🌟 PREMIUM SMART TEXT FOR 'RECENT' & 'FAVORITES'
+                        if (page == 0) {
+                            EmptyStateView(
+                                title = "No Recent Activity",
+                                subtitle = "Pick up right where you left off. Open any PDF to quickly access it here."
+                            )
+                        } else {
+                            EmptyStateView(
+                                title = "No Favorites Yet",
+                                subtitle = "Keep your important PDFs handy. Tap the bookmark icon to add them here."
+                            )
+                        }
                     } else {
                         if (state.isGridView) {
                             key(state.sortType) {

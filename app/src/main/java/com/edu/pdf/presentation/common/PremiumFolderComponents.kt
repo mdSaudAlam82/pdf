@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,13 +59,22 @@ fun PremiumFolderListItem(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Main Icon
-        Icon(
-            imageVector = icon,
-            contentDescription = name,
-            tint = iconTint,
-            modifier = Modifier.size(52.dp)
-        )
+
+        // 🌟 SMART ICON LOGIC: Agar normal folder hai to Nayi Photo lagao, warna WhatsApp/Camera ka icon chalne do!
+        if (icon == Icons.Default.Folder || icon == Icons.Rounded.Folder) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = com.edu.pdf.R.drawable.premium_folder1),
+                contentDescription = name,
+                modifier = Modifier.size(52.dp)
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = name,
+                tint = iconTint,
+                modifier = Modifier.size(52.dp)
+            )
+        }
 
         Spacer(modifier = Modifier.width(16.dp))
 
