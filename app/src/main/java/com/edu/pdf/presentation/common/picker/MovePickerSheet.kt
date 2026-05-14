@@ -3,8 +3,18 @@ package com.edu.pdf.presentation.common.picker
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,8 +22,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -94,7 +121,9 @@ private fun MovePickerSheetContent(
         }
 
         Scaffold(
-            modifier = Modifier.fillMaxSize().imePadding(),
+            // 🌟 STRICT FIX 1: Yahan se imePadding() HATA DIYA HAI!
+            // Ab keyboard aane par button apni jagah par fix rahega.
+            modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
                 Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
@@ -126,29 +155,13 @@ private fun MovePickerSheetContent(
                         )
                     }
                 }
-            },
-            bottomBar = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp)
-                        .navigationBarsPadding()
-                ) {
-                    Button(
-                        onClick = { onAction(MovePickerAction.ConfirmMoveHere) },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text("Move Here", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
-                    }
-                }
             }
+            // 🌟 STRICT FIX 2: Scaffold ka bottomBar hata diya gaya hai.
         ) { paddingValues ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = paddingValues.calculateTopPadding())
+                    .padding(top = paddingValues.calculateTopPadding()) // Sirf top padding di
                     .background(MaterialTheme.colorScheme.surface)
             ) {
                 if (state.isLoading) {
@@ -168,32 +181,53 @@ private fun MovePickerSheetContent(
                         Text("No sub-folders here", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        // 🌟 STRICT FIX 3: Niche 120.dp ki jagah chhodi taaki list button ke upar aa sake
+                        contentPadding = PaddingValues(bottom = 120.dp)
+                    ) {
                         items(state.subFolders, key = { it.folderId }) { folder ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onAction(MovePickerAction.NavigateTo(folder.folderId)) }
-                                    .padding(horizontal = 24.dp, vertical = 20.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // 🌟 UI FIX: Yellow color aur bada size (40.dp)
-                                Icon(
-                                    imageVector = Icons.Default.Folder,
-                                    contentDescription = null,
-                                    tint = Color(0xFFFFC107),
-                                    modifier = Modifier.size(40.dp)
-                                )
-                                Spacer(modifier = Modifier.width(20.dp))
-                                Text(text = folder.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-                            }
-                            // 🌟 UI FIX: HorizontalDivider (Line) yahan se hata di gayi hai!
+                            // ✅ YAHAN PASTE KAREIN
+                            com.edu.pdf.presentation.common.PremiumFolderListItem(
+                                name = folder.name,
+                                itemCount = folder.pdfCount,
+                                showMoreOptions = false,
+                                onClick = { onAction(MovePickerAction.NavigateTo(folder.folderId)) }
+                            )
                         }
+                    }
+                }
+
+                // 🌟 ELITE 2026 UI FIX: Floating Docked Button with Glass Fade
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                    MaterialTheme.colorScheme.surface
+                                )
+                            )
+                        )
+                        .padding(horizontal = 24.dp, vertical = 24.dp)
+                        .navigationBarsPadding()
+                ) {
+                    Button(
+                        onClick = { onAction(MovePickerAction.ConfirmMoveHere) },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Move Here", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
             }
         }
 
+        // ... Yahan se aapka if (state.isCreatingFolder) wala AlertDialog code aayega jo pehle se ekdum sahi hai ...
         if (state.isCreatingFolder) {
             val focusRequester = remember { FocusRequester() }
             val keyboard = LocalSoftwareKeyboardController.current

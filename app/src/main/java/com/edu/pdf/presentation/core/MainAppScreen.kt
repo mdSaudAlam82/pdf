@@ -115,7 +115,6 @@ fun MainAppScreen() {
 }
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-// 🌟 FIX 2: Function signature mein 'isTablet: Boolean' add kiya
 fun NavGraphBuilder.homeSection(navController: NavHostController, isTablet: Boolean) {
     composable<Screen.Home> {
         val paneNavigator = rememberListDetailPaneScaffoldNavigator<Any>()

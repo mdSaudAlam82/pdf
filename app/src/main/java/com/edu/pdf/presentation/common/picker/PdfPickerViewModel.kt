@@ -10,8 +10,13 @@ import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -30,6 +35,14 @@ sealed interface PdfPickerAction {
     data class OnSearchQueryChange(val query: String) : PdfPickerAction
     data class ToggleSelection(val pdfId: String) : PdfPickerAction
     data object ClearSelection : PdfPickerAction
+    // 🌟 MVI STRICT FIX: Naye actions
+    data object NavigateBack : PdfPickerAction
+    data object CloseSheet : PdfPickerAction
+}
+
+// 🌟 MVI STRICT FIX: ViewModel se UI ko band karne ka event
+sealed interface PdfPickerEvent {
+    data object Dismiss : PdfPickerEvent
 }
 
 @HiltViewModel
@@ -40,7 +53,9 @@ class PdfPickerViewModel @Inject constructor(
     // 🌟 THE ELITE FIX: Single Source of Truth
     private val _state = MutableStateFlow(PdfPickerState())
     val state = _state.asStateFlow()
-
+    // 🌟 NAYA: Event Channel
+    private val _events = Channel<PdfPickerEvent>()
+    val events = _events.receiveAsFlow()
     private var searchJob: Job? = null
     private var dataLoadJob: Job? = null
 
@@ -73,6 +88,20 @@ class PdfPickerViewModel @Inject constructor(
             }
             is PdfPickerAction.ClearSelection -> {
                 _state.update { it.copy(selectedIds = persistentSetOf()) }
+            }
+            // 🌟 NAYA: UI se saara back calculation yahan aa gaya
+            is PdfPickerAction.NavigateBack -> {
+                val currentBreadcrumbs = _state.value.breadcrumbs
+                if (currentBreadcrumbs.size > 1) {
+                    val parentFolder = currentBreadcrumbs[currentBreadcrumbs.size - 2]
+                    onAction(PdfPickerAction.NavigateToFolder(parentFolder))
+                } else {
+                    onAction(PdfPickerAction.CloseSheet)
+                }
+            }
+            is PdfPickerAction.CloseSheet -> {
+                onAction(PdfPickerAction.ClearSelection)
+                viewModelScope.launch { _events.send(PdfPickerEvent.Dismiss) }
             }
         }
     }

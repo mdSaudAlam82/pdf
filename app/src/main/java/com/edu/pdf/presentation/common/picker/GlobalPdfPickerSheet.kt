@@ -40,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -72,10 +73,17 @@ fun GlobalPdfPickerSheet(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // सारा डेटा नीचे Stateless UI को पास कर दिया
+    // 🌟 NAYA: ViewModel ka Event sunkar sheet dismiss karega
+    LaunchedEffect(viewModel.events) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is PdfPickerEvent.Dismiss -> onDismiss()
+            }
+        }
+    }
+
     GlobalPdfPickerSheetContent(
         state = state,
-        onDismiss = onDismiss,
         onPdfsSelected = onPdfsSelected,
         onAction = viewModel::onAction
     )
@@ -86,26 +94,14 @@ fun GlobalPdfPickerSheet(
 @Composable
 fun GlobalPdfPickerSheetContent(
     state: PdfPickerState,
-    onDismiss: () -> Unit,
     onPdfsSelected: (List<String>) -> Unit,
-    onAction: (PdfPickerAction) -> Unit // सीधा Action पास हुआ
+    onAction: (PdfPickerAction) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
 
     Dialog(
-        onDismissRequest = {
-            if (state.currentFolderId != null) {
-                val parentFolder = if (state.breadcrumbs.size > 1) {
-                    state.breadcrumbs[state.breadcrumbs.size - 2]
-                } else {
-                    null
-                }
-                onAction(PdfPickerAction.NavigateToFolder(parentFolder)) // 'viewModel.' हटा दिया
-            } else {
-                onAction(PdfPickerAction.ClearSelection) // 'viewModel.' हटा दिया
-                onDismiss()
-            }
-        },
+        // 🌟 MVI STRICT FIX: Saara kachra delete! Bas action pass kiya.
+        onDismissRequest = { onAction(PdfPickerAction.NavigateBack) },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
         Scaffold(
@@ -119,10 +115,7 @@ fun GlobalPdfPickerSheetContent(
                             modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = {
-                                onAction(PdfPickerAction.ClearSelection)
-                                onDismiss()
-                            }) {
+                            IconButton(onClick = { onAction(PdfPickerAction.CloseSheet) }) {
                                 Icon(Icons.Default.Close, contentDescription = "Close")
                             }
                             Text("Select PDFs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -131,7 +124,7 @@ fun GlobalPdfPickerSheetContent(
                                 Button(
                                     onClick = {
                                         onPdfsSelected(state.selectedIds.toList())
-                                       onAction(PdfPickerAction.ClearSelection)
+                                        onAction(PdfPickerAction.CloseSheet) // 🌟 NAYA
                                     },
                                     modifier = Modifier.padding(end = 8.dp)
                                 ) {
@@ -207,25 +200,15 @@ fun GlobalPdfPickerSheetContent(
 
 // 🌟 ZERO BLOAT UI COMPONENTS
 
+// ✅ YAHAN PASTE KAREIN
 @Composable
 private fun PickerFolderRow(folder: Folder, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier.width(48.dp).height(60.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Folder, contentDescription = "Folder", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(36.dp))
-        }
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(folder.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
-            Text("${folder.pdfCount} items", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-    }
+    com.edu.pdf.presentation.common.PremiumFolderListItem(
+        name = folder.name,
+        itemCount = folder.pdfCount,
+        showMoreOptions = false,
+        onClick = onClick
+    )
 }
 
 @Composable

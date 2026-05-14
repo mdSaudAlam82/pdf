@@ -1,10 +1,8 @@
 package com.edu.pdf.presentation.folders
 
-import android.widget.Toast
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
@@ -14,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,13 +24,11 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PhotoCamera
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -55,11 +50,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -73,33 +66,21 @@ fun FoldersScreen(
     onFolderClick: (String, String) -> Unit,
     viewModel: FoldersViewModel = hiltViewModel()
 ) {
-    // 🌟 EXACT FIX: Yahan 'viewModel.deviceFolders' ki jagah 'viewModel.uiState' se data nikalenge
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val folders = uiState.deviceFolders
 
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    LocalContext.current
     val haptic = LocalHapticFeedback.current
-
     val activity = androidx.activity.compose.LocalActivity.current as? FragmentActivity
 
     val biometricPrompt = remember(activity) {
         if (activity != null) {
             val executor = ContextCompat.getMainExecutor(activity)
             BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    Toast.makeText(activity, "Vault Locked: $errString", Toast.LENGTH_SHORT).show()
-                }
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
                     haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                     onFolderClick("vault_root", "Private Vault")
-                }
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    Toast.makeText(activity, "Fingerprint not recognized", Toast.LENGTH_SHORT).show()
                 }
             })
         } else null
@@ -117,11 +98,16 @@ fun FoldersScreen(
         topBar = { UniversalTopBar(title = "Device Folders", scrollBehavior = scrollBehavior) },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
+
+        // 🌟 EXACT FIX: Humne 'padding' ko tod diya hai!
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                // 🌟 Sirf Top bar ki padding li, bottom ki padding HATA di! (Edge-to-Edge)
+                .padding(top = padding.calculateTopPadding())
         ) {
+
+            // 🌟 1. FIXED VAULT CARD
             PremiumVaultCard(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -132,35 +118,20 @@ fun FoldersScreen(
                     }
                 }
             )
-            Text(
-                text = "Physical Storage",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-            )
+
+            // 🌟 2. SCROLLING FOLDERS
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(bottom = 100.dp)
+                modifier = Modifier.fillMaxSize(),
+                // 🌟 PERFECT NATIVE FEEL: Ab list ekdum screen ke aakhri chhor (edge) tak jayegi.
+                // Aakhri folder navigation bar ke piche na chhupe, isliye sirf bottom mein system bar jitni jagah di hai.
+                contentPadding = PaddingValues(bottom = padding.calculateBottomPadding())
             ) {
-                // 🌟 FIX: Loading state add kar diya taaki crash na ho
-                if (uiState.isLoading) {
-                    item {
-                        Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                    }
-                } else {
-                    items(folders, key = { it.absolutePath }) { folder ->
-                        PhysicalFolderItem(
-                            folderName = folder.name,
-                            pdfCount = folder.pdfCount,
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onFolderClick(folder.absolutePath, folder.name)
-                            }
-                        )
-                    }
+                items(folders) { folder ->
+                    PhysicalFolderItem(
+                        folderName = folder.name,
+                        pdfCount = folder.pdfCount,
+                        onClick = { onFolderClick(folder.absolutePath, folder.name) }
+                    )
                 }
             }
         }
@@ -252,56 +223,17 @@ fun rememberSmartFolderConfig(folderName: String): SmartFolderConfig {
         }
     }
 }
+// ✅ YAHAN PASTE KAREIN
 @Composable
 fun PhysicalFolderItem(folderName: String, pdfCount: Int, onClick: () -> Unit) {
-    // 🌟 Fetching the smart contextual design based on the folder's name
     val smartConfig = rememberSmartFolderConfig(folderName)
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(14.dp)) // 2026 standard squircle
-                .background(smartConfig.color.copy(alpha = 0.15f)), // 15% opacity tint for premium glass look
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = smartConfig.icon,
-                contentDescription = folderName,
-                tint = smartConfig.color,
-                modifier = Modifier.size(26.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.width(18.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = folderName,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "$pdfCount PDFs",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Icon(
-            imageVector = Icons.Rounded.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
-    }
+    com.edu.pdf.presentation.common.PremiumFolderListItem(
+        name = folderName,
+        itemCount = pdfCount,
+        icon = smartConfig.icon,
+        iconTint = smartConfig.color,
+        showMoreOptions = false,
+        onClick = onClick
+    )
 }
