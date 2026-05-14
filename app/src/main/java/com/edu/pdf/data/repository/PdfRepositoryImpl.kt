@@ -333,10 +333,14 @@ class PdfRepositoryImpl @Inject constructor(
     override suspend fun searchPdfsFast(query: String, isVault: Boolean): List<PdfFile> = pdfDao.searchPdfsFast(query, isVault).map { it.toDomainModel() }
     override fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>> = pdfDao.getPdfsInPhysicalFolder(folderPath).map { list -> list.map { it.toDomainModel() } }
 
-    override fun getPaginatedPdfsInPhysicalFolder(folderPath: String): Flow<androidx.paging.PagingData<PdfFile>> {
+    override fun getPaginatedPdfsInPhysicalFolder(folderPath: String, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>> {
+        val baseQuery = "SELECT * FROM pdf_table WHERE path LIKE ? || '/%' AND path NOT LIKE ? || '/%/%' AND isVault = 0"
+        val fullQueryString = getSortQuery(baseQuery, sortType)
+        val query = SimpleSQLiteQuery(fullQueryString, arrayOf(folderPath, folderPath))
+
         return androidx.paging.Pager(
             config = androidx.paging.PagingConfig(pageSize = 30, prefetchDistance = 15, enablePlaceholders = false),
-            pagingSourceFactory = { pdfDao.getPaginatedPdfsInPhysicalFolder(folderPath) }
+            pagingSourceFactory = { pdfDao.getPaginatedPdfsInPhysicalFolderRaw(query) }
         ).flow.map { pagingData -> pagingData.map { it.toDomainModel() } }
     }
 
@@ -366,10 +370,22 @@ class PdfRepositoryImpl @Inject constructor(
                 }
         }
     }
-    override fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean): Flow<androidx.paging.PagingData<PdfFile>> {
+    override fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>> {
+        val isVaultInt = if (isVault) 1 else 0
+        val parentCondition = if (parentPath == null) "parentPath IS NULL" else "parentPath = ?"
+        val baseQuery = "SELECT * FROM pdf_table WHERE $parentCondition AND isVault = $isVaultInt"
+
+        val fullQueryString = getSortQuery(baseQuery, sortType)
+
+        val query = if (parentPath == null) {
+            SimpleSQLiteQuery(fullQueryString)
+        } else {
+            SimpleSQLiteQuery(fullQueryString, arrayOf(parentPath))
+        }
+
         return androidx.paging.Pager(
             config = androidx.paging.PagingConfig(pageSize = 30, prefetchDistance = 15, enablePlaceholders = false),
-            pagingSourceFactory = { pdfDao.getPaginatedPdfsByParent(parentPath, isVault) }
+            pagingSourceFactory = { pdfDao.getPaginatedPdfsByParentRaw(query) }
         ).flow.map { pagingData -> pagingData.map { it.toDomainModel() } }
     }
 }

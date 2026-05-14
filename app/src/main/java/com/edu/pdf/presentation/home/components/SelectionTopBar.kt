@@ -19,12 +19,10 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun SelectionTopBar(
     selectedCount: Int,
-    totalCount: Int,
+    isAllSelected: Boolean, // 🌟 UI MATH HATA DIYA: Ab ye seedha HomeScreen se aayega
     onClearSelection: () -> Unit,
     onSelectAllToggle: () -> Unit
 ) {
-    val isAllSelected = selectedCount == totalCount && totalCount > 0
-
     TopAppBar(
         title = {
             Text(
@@ -44,13 +42,11 @@ fun SelectionTopBar(
                 Icon(
                     imageVector = if (isAllSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
                     contentDescription = null,
-                    // 🌟 SYNCED: Exactly matching the list item's 40% alpha logic
                     tint = if (isAllSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                 )
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            // 🌟 PRO FIX: Selection bar bhi 100% Sheesha!
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent,
             navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant

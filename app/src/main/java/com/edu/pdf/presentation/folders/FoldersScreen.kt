@@ -1,9 +1,6 @@
 package com.edu.pdf.presentation.folders
 
-import android.content.Context
-import android.content.ContextWrapper
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -69,12 +66,6 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.edu.pdf.presentation.common.UniversalTopBar
 
-// 🌟 PRO FIX: Context se Activity nikalne ka 100% safe tarika
-fun Context.getActivity(): ComponentActivity? = when (this) {
-    is ComponentActivity -> this
-    is ContextWrapper -> baseContext.getActivity()
-    else -> null
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,10 +78,10 @@ fun FoldersScreen(
     val folders = uiState.deviceFolders
 
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    val context = LocalContext.current
+    LocalContext.current
     val haptic = LocalHapticFeedback.current
 
-    val activity = context.getActivity() as? FragmentActivity
+    val activity = androidx.activity.compose.LocalActivity.current as? FragmentActivity
 
     val biometricPrompt = remember(activity) {
         if (activity != null) {

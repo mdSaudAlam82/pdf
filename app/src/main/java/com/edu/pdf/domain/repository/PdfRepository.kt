@@ -46,8 +46,11 @@ interface PdfRepository {
     fun getSecureVaultStreamUri(encryptedPath: String): String
 
     fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>>
-    fun getPaginatedPdfsInPhysicalFolder(folderPath: String): Flow<androidx.paging.PagingData<PdfFile>>
+    // इन दोनों को पुराने वाले से REPLACE कर दें
+    fun getPaginatedPdfsInPhysicalFolder(folderPath: String, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
 
-    fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean = false): Flow<androidx.paging.PagingData<PdfFile>>
+    fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean = false, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
+
+
 
 }

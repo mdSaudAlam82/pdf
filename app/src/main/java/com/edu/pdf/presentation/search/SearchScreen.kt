@@ -123,15 +123,6 @@ fun SearchScreen(
         }
     }
 
-    var textFieldValue by remember {
-        mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
-    }
-
-    LaunchedEffect(query) {
-        if (query != textFieldValue.text) {
-            textFieldValue = TextFieldValue(text = query, selection = TextRange(query.length))
-        }
-    }
 
     LaunchedEffect(Unit) {
         androidx.compose.runtime.withFrameNanos { }
@@ -161,10 +152,9 @@ fun SearchScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface)
                     }
                     TextField(
-                        value = textFieldValue,
+                        value = query, // 🌟 MVI FIX: सीधा ViewModel का स्टेट इस्तेमाल कर रहे हैं
                         onValueChange = { newValue ->
-                            textFieldValue = newValue
-                            viewModel.onAction(SearchAction.OnQueryChange(newValue.text))
+                            viewModel.onAction(SearchAction.OnQueryChange(newValue)) // 🌟 newValue अब सीधे String है
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -180,14 +170,13 @@ fun SearchScreen(
                         ),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            viewModel.onAction(SearchAction.SaveSearchQuery(textFieldValue.text))
+                            viewModel.onAction(SearchAction.SaveSearchQuery(query)) // 🌟 MVI FIX
                             keyboardController?.hide()
                         }),
                         trailingIcon = {
-                            if (textFieldValue.text.isNotEmpty()) {
+                            if (query.isNotEmpty()) { // 🌟 MVI FIX
                                 IconButton(onClick = {
                                     viewModel.onAction(SearchAction.ClearSearch)
-                                    textFieldValue = TextFieldValue("", TextRange.Zero)
                                     focusRequester.requestFocus()
                                 }) {
                                     Icon(Icons.Default.Clear, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -198,7 +187,7 @@ fun SearchScreen(
                 }
             }
 
-            if (textFieldValue.text.isBlank()) {
+            if (query.isBlank()) {
                 ZeroStateView(
                     history = history,
                     onHistoryItemClick = { pastQuery -> viewModel.onAction(SearchAction.OnQueryChange(pastQuery)) },
@@ -206,7 +195,7 @@ fun SearchScreen(
                     onClearAll = { viewModel.onAction(SearchAction.ClearAllHistory) }
                 )
             } else if (results.isEmpty()) {
-                EmptyStateView(query = textFieldValue.text)
+                EmptyStateView(query = query)
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -215,9 +204,9 @@ fun SearchScreen(
                     items(results, key = { it.id }) { pdf ->
                         SearchItemRow(
                             pdf = pdf,
-                            query = textFieldValue.text,
+                            query = query,
                             onClick = {
-                                viewModel.onAction(SearchAction.SaveSearchQuery(textFieldValue.text))
+                                viewModel.onAction(SearchAction.SaveSearchQuery(query))
                                 viewModel.onAction(SearchAction.MarkPdfAsOpened(pdf.id))
                                 keyboardController?.hide()
                                 onPdfClick(pdf.path)

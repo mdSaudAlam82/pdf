@@ -64,7 +64,12 @@ fun VaultScreen(
             }
         }
     }
-
+// 🌟 ELITE SECURITY FIX: जब भी यूज़र Vault से बाहर जाएगा, सारी डिक्रिप्टेड फाइलें तुरंत नष्ट हो जाएंगी!
+    DisposableEffect(Unit) {
+        onDispose {
+            com.edu.pdf.data.security.SecurityUtils.wipeVaultTempStorage(context)
+        }
+    }
     VaultScreenPure(
         state = uiState,
         onBack = onBack,

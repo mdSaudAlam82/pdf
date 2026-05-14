@@ -46,7 +46,6 @@ import com.edu.pdf.presentation.common.PremiumNavigationRail
 import com.edu.pdf.presentation.common.UniversalTopBar
 import com.edu.pdf.presentation.folders.FoldersScreen
 import com.edu.pdf.presentation.folders.UnifiedFolderScreen
-import com.edu.pdf.presentation.folders.getActivity
 import com.edu.pdf.presentation.folders.vault.VaultScreen
 import com.edu.pdf.presentation.home.HomeScreenWrapper
 import com.edu.pdf.presentation.home.HomeViewModel
@@ -64,9 +63,9 @@ fun hasStoragePermission(): Boolean {
 @Composable
 fun MainAppScreen() {
     val navController = rememberNavController()
-    val context = LocalContext.current
+    LocalContext.current
 
-    val windowSizeClass = calculateWindowSizeClass(activity = context.getActivity() ?: return)
+    val windowSizeClass = calculateWindowSizeClass(activity = androidx.activity.compose.LocalActivity.current ?: return)
     val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     val startScreen: Screen = remember {

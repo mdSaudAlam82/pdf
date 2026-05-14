@@ -2,6 +2,8 @@ package com.edu.pdf.presentation.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.cachedIn
+import androidx.paging.map
 import com.edu.pdf.data.preferences.UserPreferences
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.HomeItem
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -37,10 +40,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.map
-import androidx.paging.cachedIn
-import androidx.paging.map
 
 sealed interface HomeSheetState {
     data object None : HomeSheetState
@@ -106,6 +105,9 @@ sealed interface HomeAction {
     data object OpenAppPdfPicker : HomeAction
     data class ImportFile(val uriString: String) : HomeAction
     data class MovePdfsToCurrentFolder(val pdfIds: List<String>) : HomeAction
+
+    data class SelectAllInTab(val tabIndex: Int) : HomeAction
+
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -124,13 +126,20 @@ class HomeViewModel @Inject constructor(
     private val _internalState = MutableStateFlow(HomeUiState(isLoading = true, activeSheetState = HomeSheetState.None))
     private var hasInitialized = false
 
-    // FILE: com/edu/pdf/presentation/home/HomeViewModel.kt
-// लाइन नंबर 80 के आस-पास 'unifiedItemsFlow' को इस तरह अपडेट करें:
 
     // 1. Sirf Folders ke liye Flow
+    // 1. 🌟 ELITE MVI FIX: Folders ab Sort Type ke hisaab se react karenge
     private val currentFoldersFlow = _sortType.flatMapLatest { sort ->
         repository.getManagedFolders(null, isVault = false).map { folders ->
-            folders.map { HomeItem.FolderItem(it) }.toImmutableList()
+            val sortedFolders = when (sort) {
+                SortType.NAME_ASC -> folders.sortedBy { it.name.lowercase() }
+                SortType.NAME_DESC -> folders.sortedByDescending { it.name.lowercase() }
+                SortType.DATE_DESC -> folders.sortedByDescending { it.createdAt }
+                SortType.DATE_ASC -> folders.sortedBy { it.createdAt }
+                SortType.SIZE_DESC -> folders.sortedByDescending { it.pdfCount } // Folder ke liye size = file count
+                SortType.SIZE_ASC -> folders.sortedBy { it.pdfCount }
+            }
+            sortedFolders.map { HomeItem.FolderItem(it) }.toImmutableList()
         }
     }.flowOn(Dispatchers.Default)
 
@@ -195,6 +204,30 @@ class HomeViewModel @Inject constructor(
             }
             is HomeAction.SetSelectionMode -> _internalState.update { it.copy(isSelectionMode = action.enabled, selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds) }
             is HomeAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
+            // ✅ YAHAN YE NAYA CODE PASTE KARO ✅
+            is HomeAction.SelectAllInTab -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    val allIds = when (action.tabIndex) {
+                        0 -> { // Recent Tab
+                            val recentPdfs = repository.getRecentPdfs().first().map { it.id }
+                            val recentFolders = repository.getRecentFolders().first().map { it.folderId }
+                            recentPdfs + recentFolders
+                        }
+                        1 -> { // 🌟 FIX: All Files Tab (Ab Folders bhi database se aayenge)
+                            val folderIds = repository.getManagedFolders(null, isVault = false).first().map { it.folderId }
+                            val pdfs = repository.getUncategorizedPdfs(_sortType.value).first()
+                            folderIds + pdfs.map { it.id }
+                        }
+                        2 -> { // Favorites Tab
+                            repository.getFavoritePdfs(_sortType.value).first().map { it.id }
+                        }
+                        else -> emptyList()
+                    }
+                    withContext(Dispatchers.Main) {
+                        _internalState.update { it.copy(selectedIds = allIds.toPersistentSet()) }
+                    }
+                }
+            }
             is HomeAction.NavigateToVirtualFolder -> {
                 viewModelScope.launch(Dispatchers.IO) { repository.updateFolderLastOpenedTime(action.folder.folderId, System.currentTimeMillis()) }
                 viewModelScope.launch { _events.send(HomeEvent.NavigateToFolder(action.folder.folderId, action.folder.name, com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB)) }

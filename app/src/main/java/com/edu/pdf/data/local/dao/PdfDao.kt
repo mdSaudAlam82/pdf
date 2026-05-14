@@ -40,25 +40,36 @@ interface PdfDao {
     suspend fun insertFolder(folder: FolderEntity)
 
     // 🌟 ELITE FIX: Grouping by ID (New Primary Key) taaki count accurate rahe
+    // 🌟 ELITE FIX: Ab ye PDF + Sub-folders dono ko ginega (34 files + 1 folder = 35 items)
     @Query("""
-        SELECT f.*, COUNT(p.id) as pdfCount 
+        SELECT f.*, 
+        ( (SELECT COUNT(id) FROM pdf_table WHERE parentPath = f.absolutePath) + 
+          (SELECT COUNT(id) FROM managed_folders WHERE parentPath = f.absolutePath) ) as pdfCount
         FROM managed_folders f 
-        LEFT JOIN pdf_table p ON f.absolutePath = p.parentPath 
         WHERE f.parentPath IS :parentPath AND f.isVault = :isVault 
-        GROUP BY f.id 
         ORDER BY f.name ASC
     """)
     fun getFoldersByParentWithCount(parentPath: String?, isVault: Boolean): Flow<List<FolderWithCount>>
 
     @Query("""
-        SELECT f.*, COUNT(p.id) as pdfCount 
+        SELECT f.*, 
+        ( (SELECT COUNT(id) FROM pdf_table WHERE parentPath = f.absolutePath) + 
+          (SELECT COUNT(id) FROM managed_folders WHERE parentPath = f.absolutePath) ) as pdfCount
         FROM managed_folders f 
-        LEFT JOIN pdf_table p ON f.absolutePath = p.parentPath 
         WHERE f.isVault = :isVault 
-        GROUP BY f.id 
         ORDER BY f.name ASC
     """)
     fun getAllFoldersWithCount(isVault: Boolean): Flow<List<FolderWithCount>>
+
+    @Query("""
+        SELECT f.*, 
+        ( (SELECT COUNT(id) FROM pdf_table WHERE parentPath = f.absolutePath) + 
+          (SELECT COUNT(id) FROM managed_folders WHERE parentPath = f.absolutePath) ) as pdfCount
+        FROM managed_folders f 
+        WHERE f.lastOpenedTime > 0 AND f.isVault = 0 
+        ORDER BY f.lastOpenedTime DESC LIMIT 50
+    """)
+    fun getRecentFoldersWithCount(): Flow<List<FolderWithCount>>
 
     @Query("UPDATE managed_folders SET name = :newName, absolutePath = :newPath, parentPath = :newParentPath WHERE absolutePath = :oldPath")
     suspend fun renameFolder(oldPath: String, newName: String, newPath: String, newParentPath: String?)
@@ -71,17 +82,6 @@ interface PdfDao {
 
     @Query("UPDATE managed_folders SET lastOpenedTime = :time WHERE absolutePath = :path")
     suspend fun updateFolderLastOpenedTime(path: String, time: Long)
-
-    @Query("""
-        SELECT f.*, COUNT(p.id) as pdfCount 
-        FROM managed_folders f 
-        LEFT JOIN pdf_table p ON f.absolutePath = p.parentPath 
-        WHERE f.lastOpenedTime > 0 AND f.isVault = 0 
-        GROUP BY f.id 
-        ORDER BY f.lastOpenedTime DESC LIMIT 50
-    """)
-    fun getRecentFoldersWithCount(): Flow<List<FolderWithCount>>
-
 
     // ==========================================
     // 🌪️ ELITE CASCADE RENAME ENGINE (Tumhara Original Smart Logic!)
@@ -172,11 +172,13 @@ interface PdfDao {
     // ==========================================
     // 🔍 FTS SEARCH & PAGING ENGINE
     // ==========================================
+    // ==========================================
+    // 🔍 SMART SEARCH & PAGING ENGINE
+    // ==========================================
     @Query("""
-        SELECT pdf_table.* FROM pdf_table 
-        JOIN pdf_fts_table ON pdf_table.roomId = pdf_fts_table.rowid 
-        WHERE pdf_fts_table MATCH :query || '*' AND pdf_table.isVault = 0
-        ORDER BY pdf_table.lastModified DESC
+        SELECT * FROM pdf_table 
+        WHERE name LIKE '%' || :query || '%' AND isVault = 0
+        ORDER BY lastModified DESC
         LIMIT 50
     """)
     fun searchPdfsInDatabase(query: String): Flow<List<PdfEntity>>
@@ -231,5 +233,11 @@ interface PdfDao {
     @RawQuery(observedEntities = [PdfEntity::class])
     fun getUncategorizedPdfsPaged(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
 
+    // 🌟 ELITE MVI FIX: Dynamic Paging 3 Sorting
+    @RawQuery(observedEntities = [PdfEntity::class])
+    fun getPaginatedPdfsByParentRaw(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
+
+    @RawQuery(observedEntities = [PdfEntity::class])
+    fun getPaginatedPdfsInPhysicalFolderRaw(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
 
 }

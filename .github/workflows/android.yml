@@ -19,31 +19,37 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'zulu' # Aapka favourite and stable distribution
+          distribution: 'zulu'
           cache: gradle
 
-      # 🌟 THE CRITICAL FIX: Permission denied (Exit 126) ko khatam karne ke liye
       - name: 🔨 Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # 🌟 Step 1: Code Quality Check (Android Default Lint)
-      # Ye ensure karega ki architecture aur performance mein koi issue na ho
       - name: 🔍 Run Quality Lint
         run: ./gradlew lint
 
-      # 🌟 Step 2: Debug Build (For instant testing)
-      - name: 🛠️ Build Debug APK
-        run: ./gradlew assembleDebug
-
-      # 🌟 Step 3: Release Build (For performance bench-marking)
+      # 🌟 Step 1: Sirf Release Build banayenge (Taaki APK chhota aur fast ho)
       - name: 🚀 Build Release APK
         run: ./gradlew assembleRelease
 
-      # 🌟 Step 4: Dono APKs ko ek saath upload karna
-      - name: 📦 Upload Build Artifacts
+      # 🌟 Step 2: ELITE FIX - Unsigned APK ko Sign karke Installable banana
+      - name: 🔐 Sign APK (Create Installable RC Build)
+        run: |
+          # 1. Ek temporary Keystore banate hain (Sirf is build ke liye)
+          keytool -genkey -v -keystore temp.keystore -alias hiread-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=HiRead, OU=OpenSource, O=GitHub, L=India, ST=India, C=IN"
+          
+          # 2. Android ke latest build-tools ka path nikalte hain
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_SDK_ROOT/build-tools/* | tail -1)
+          
+          # 3. Zipalign karte hain (Ye APK ko RAM-efficient banata hai)
+          $BUILD_TOOLS_DIR/zipalign -v 4 app/build/outputs/apk/release/app-release-unsigned.apk app-release-aligned.apk
+          
+          # 4. APK ko finally Sign karte hain!
+          $BUILD_TOOLS_DIR/apksigner sign --ks temp.keystore --ks-pass pass:android --out Hi-Read-RC-Build.apk app-release-aligned.apk
+
+      # 🌟 Step 3: Direct APK Upload karna (Faltu folders hat gaye!)
+      - name: 📦 Upload Installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hi-Read-Build-Package
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release-unsigned.apk
+          name: Hi-Read-RC-Build
+          path: Hi-Read-RC-Build.apk

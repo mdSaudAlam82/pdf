@@ -163,19 +163,20 @@ fun UnifiedFolderScreen(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             if (isSelectionMode) {
+                // 🌟 STEP 1: UI Maths yahin calculate karo
+                val totalItems = uiState.folders.size + pagedPdfs.itemCount
+                val isAllSelected = totalItems > 0 && selectedPdfs.size >= totalItems
+
                 SelectionTopBar(
                     selectedCount = selectedPdfs.size,
-                    totalCount = uiState.folders.size + pagedPdfs.itemCount, // 🌟 Clean Total Count
+                    isAllSelected = isAllSelected, // 🌟 FIX: Naya parameter jo humne pehle banaya tha
                     onClearSelection = { viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false)) },
                     onSelectAllToggle = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        val total = uiState.folders.size + pagedPdfs.itemCount
-                        if (selectedPdfs.size == total) {
+                        if (isAllSelected) {
                             viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
                         } else {
-                            val folderIds = uiState.folders.map { it.folder.folderId }
-                            val pdfIds = (0 until pagedPdfs.itemCount).mapNotNull { pagedPdfs.peek(it)?.pdf?.id }
-                            viewModel.onAction(UnifiedFolderAction.SelectAll(folderIds + pdfIds))
+                            viewModel.onAction(UnifiedFolderAction.SelectAllItems)
                         }
                     }
                 )
@@ -188,7 +189,12 @@ fun UnifiedFolderScreen(
                     onAddFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
                     onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                     onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
-                    onSelectClick = { viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true)) }
+                    onSelectClick = {
+                        // 🌟 1-CLICK MAGIC: Selection Mode ON करो और तुरंत सब सेलेक्ट कर लो!
+                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+                        viewModel.onAction(UnifiedFolderAction.SelectAllItems)
+                    }
+
                 )
             }
         },

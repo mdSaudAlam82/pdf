@@ -24,7 +24,20 @@ import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -66,6 +79,8 @@ sealed interface UnifiedFolderAction {
     data object OpenAppPdfPicker : UnifiedFolderAction
     data class ToggleVaultStatus(val pdf: com.edu.pdf.domain.model.PdfFile) : UnifiedFolderAction
     data class MovePdfsToCurrentFolder(val pdfIds: List<String>) : UnifiedFolderAction
+
+    data object SelectAllItems : UnifiedFolderAction
 }
 
 // 🌟 ELITE FIX: UI State ab aur bhi clean ho gaya! Pdfs ko hata diya, ab wo Paging se aayenge
@@ -77,7 +92,7 @@ data class UnifiedFolderUiState(
     val folderName: String = "",
     val folders: ImmutableList<HomeItem.FolderItem> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
-    val foldersTree: ImmutableList<Folder> = persistentListOf(), // 🌟 NAYA: Khud ka folders tree
+    val foldersTree: ImmutableList<Folder> = persistentListOf(), 
     val isSelectionMode: Boolean = false,
     val selectedIds: PersistentSet<String> = persistentSetOf(),
     val isGridView: Boolean = false,
@@ -121,28 +136,38 @@ class UnifiedFolderViewModel @Inject constructor(
     }
 
     // 🌟 THE 120FPS MAGIC: Paging 3 for BOTH Physical & Managed Folders!
-    val pagedPdfsFlow: Flow<PagingData<HomeItem.PdfItem>> = combine(_currentFolderId, _currentFolderType) { id, type -> id to type }
-        .flatMapLatest { (id, type) ->
-            if (type == FolderType.PHYSICAL_DEVICE) {
-                repository.getPaginatedPdfsInPhysicalFolder(id ?: "")
-            } else {
-                repository.getPaginatedManagedPdfs(id, isVault = type == FolderType.SECURE_VAULT)
-            }
-        }.map { pagingData -> pagingData.map { HomeItem.PdfItem(it) } }
+    // 🌟 THE 120FPS MAGIC: Paging 3 for BOTH Physical & Managed Folders (With Sorting!)
+    val pagedPdfsFlow: Flow<PagingData<HomeItem.PdfItem>> = combine(_currentFolderId, _currentFolderType, _sortType) { id, type, sort ->
+        Triple(id, type, sort)
+    }.flatMapLatest { (id, type, sort) ->
+        if (type == FolderType.PHYSICAL_DEVICE) {
+            repository.getPaginatedPdfsInPhysicalFolder(id ?: "", sortType = sort)
+        } else {
+            repository.getPaginatedManagedPdfs(id, isVault = type == FolderType.SECURE_VAULT, sortType = sort)
+        }
+    }.map { pagingData -> pagingData.map { HomeItem.PdfItem(it) } }
         .cachedIn(viewModelScope)
 
-    // Folders ki list (Kyunki folders 10,000 nahi hote, inhe direct rakh sakte hain)
-    private val foldersFlow = combine(_currentFolderId, _currentFolderType) { id, type -> id to type }
-        .flatMapLatest { (id, type) ->
-            if (type == FolderType.PHYSICAL_DEVICE) {
-                // 🌟 FIX: emptyList() ki jagah persistentListOf() use karein
-                flowOf(persistentListOf())
-            } else {
-                repository.getManagedFolders(id, isVault = type == FolderType.SECURE_VAULT).map { folders ->
-                    folders.sortedBy { it.name.lowercase() }.map { HomeItem.FolderItem(it) }.toImmutableList()
+    private val foldersFlow = combine(_currentFolderId, _currentFolderType, _sortType) { id, type, sort ->
+        Triple(id, type, sort)
+    }.flatMapLatest { (id, type, sort) ->
+        if (type == FolderType.PHYSICAL_DEVICE) {
+            flowOf(persistentListOf())
+        } else {
+            repository.getManagedFolders(id, isVault = type == FolderType.SECURE_VAULT).map { folders ->
+                // 🌟 Smart Sorting: Jo user ne choose kiya hai wahi apply hoga
+                val sortedFolders = when (sort) {
+                    SortType.NAME_ASC -> folders.sortedBy { it.name.lowercase() }
+                    SortType.NAME_DESC -> folders.sortedByDescending { it.name.lowercase() }
+                    SortType.DATE_DESC -> folders.sortedByDescending { it.createdAt }
+                    SortType.DATE_ASC -> folders.sortedBy { it.createdAt }
+                    SortType.SIZE_DESC -> folders.sortedByDescending { it.pdfCount }
+                    SortType.SIZE_ASC -> folders.sortedBy { it.pdfCount }
                 }
+                sortedFolders.map { HomeItem.FolderItem(it) }.toImmutableList()
             }
-        }.flowOn(Dispatchers.Default)
+        }
+    }.flowOn(Dispatchers.Default)
 
     private val breadcrumbsFlow = combine(_currentFolderId, _currentFolderName, _currentFolderType) { id, name, type -> Triple(id, name, type) }
         .flatMapLatest { (id, name, type) ->
@@ -193,6 +218,30 @@ class UnifiedFolderViewModel @Inject constructor(
             }
             is UnifiedFolderAction.SetSelectionMode -> _internalState.update { it.copy(isSelectionMode = action.enabled, selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds) }
             is UnifiedFolderAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
+            is UnifiedFolderAction.SelectAllItems -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    // 1. फोल्डर्स के IDs निकालो
+                    val folderIds = uiState.value.folders.map { it.folder.folderId }
+
+                    val type = _currentFolderType.value
+                    val id = _currentFolderId.value
+
+                    // 2. Database से PDFs निकालो (बिना Paging के)
+                    val pdfs = if (type == FolderType.PHYSICAL_DEVICE) {
+                        repository.getPdfsInPhysicalFolder(id ?: "").first()
+                    } else {
+                        repository.getManagedPdfs(id, isVault = type == FolderType.SECURE_VAULT).first()
+                    }
+
+                    val pdfIds = pdfs.map { it.id }
+
+                    // 3. दोनों को मिला कर State अपडेट कर दो
+                    val allIds = (folderIds + pdfIds).toPersistentSet()
+                    withContext(Dispatchers.Main) {
+                        _internalState.update { it.copy(selectedIds = allIds) }
+                    }
+                }
+            }
             is UnifiedFolderAction.OpenSheet -> _internalState.update { it.copy(activeSheetState = action.state, textInput = if (action.state is UnifiedFolderSheetState.RenameDialog) action.state.currentName else "") }
             is UnifiedFolderAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.None, textInput = "") }
             is UnifiedFolderAction.OnTextInputChange -> _internalState.update { it.copy(textInput = action.text) }

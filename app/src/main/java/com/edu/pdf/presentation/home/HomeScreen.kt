@@ -33,7 +33,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
-import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -64,7 +63,6 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.common.PremiumBottomBarItems
 import com.edu.pdf.presentation.common.UniversalTopBar
-import com.edu.pdf.presentation.folders.getActivity
 import com.edu.pdf.presentation.home.components.ActionBottomBarItems
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
@@ -158,7 +156,8 @@ fun HomeScreenPure(
     var currentTab by rememberSaveable { mutableIntStateOf(1) }
     val context = LocalContext.current
 
-    val windowSizeClass = calculateWindowSizeClass(activity = context.getActivity() ?: return)
+    val activity = androidx.activity.compose.LocalActivity.current ?: return
+    val windowSizeClass = androidx.compose.material3.windowsizeclass.calculateWindowSizeClass(activity = activity)
     val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     val pagerState = rememberPagerState(pageCount = { 3 }, initialPage = 1)
@@ -194,19 +193,40 @@ fun HomeScreenPure(
         topBar = {
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
                 if (isSelectionMode) {
+                    // 🌟 STEP 1: Current Tab me total kitne items hain?
+                    val currentTabTotalCount = when (currentTab) {
+                        0 -> state.recentItems.size
+                        1 -> state.currentFolders.size + pagedPdfs.itemCount
+                        2 -> state.favoritePdfs.size
+                        else -> 0
+                    }
+
+                    // 🌟 STEP 2: Kya Current Tab ke saare items select ho chuke hain?
+                    val isAllCurrentTabSelected = if (currentTabTotalCount == 0) false else {
+                        if (currentTab == 1) {
+                            // Paging Mode: Agar selection size total se zyada/barabar hai, aur jo screen pe dikh rahe hain wo sab selected hain
+                            selectedPdfs.size >= currentTabTotalCount && currentTabItems.all { it.id in selectedPdfs }
+                        } else {
+                            // Memory Mode (Recent/Fav): Kya current tab ke saare ID selected map me hain?
+                            val tabIds = currentTabItems.map { it.id }
+                            selectedPdfs.containsAll(tabIds) && tabIds.isNotEmpty()
+                        }
+                    }
+
                     SelectionTopBar(
-                        selectedCount = selectedPdfs.size,
-                        totalCount = currentTabItems.size,
+                        selectedCount = selectedPdfs.size, // Hamesha total count dikhayega
+                        isAllSelected = isAllCurrentTabSelected, // Box RED hoga ya nahi?
                         onClearSelection = {
-                            onSelectAll(emptyList())
                             onSelectionModeChange(false)
                         },
                         onSelectAllToggle = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            if (selectedPdfs.size == currentTabItems.size) {
-                                onSelectAll(emptyList())
+                            if (isAllCurrentTabSelected) {
+                                // Agar sab select the, to click karne par sab Deselect kar do
+                                onSelectionModeChange(false)
                             } else {
-                                onSelectAll(currentTabItems.map { it.id })
+                                // NAYA ACTION: Sirf Current Tab ke items MVI ke zariye select karo
+                                onAction(HomeAction.SelectAllInTab(currentTab))
                             }
                         }
                     )
