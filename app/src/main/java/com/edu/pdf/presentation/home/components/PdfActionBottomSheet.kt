@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.PdfFile
+import kotlinx.coroutines.launch
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -109,9 +110,10 @@ fun PdfActionBottomSheet(
                 cancellationSignal: CancellationSignal?,
                 callback: WriteResultCallback?
             ) {
-                // 🌟 FIX: Use native Thread instead of Compose scope.
-                // Ye sheet close hone par kill nahi hoga!
-                Thread {
+
+                // 🌟 2026 ELITE FIX: Independent Scope जो Bottom Sheet बंद होने पर मरेगा नहीं
+                // 🌟 2026 ELITE FIX: SupervisorJob add kiya taaki errors handle ho sakein aur battery bache
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
                     try {
                         context.contentResolver.openInputStream(pdf.id.toUri())?.use { input ->
                             FileOutputStream(destination?.fileDescriptor).use { output ->
@@ -120,7 +122,7 @@ fun PdfActionBottomSheet(
                                 while (input.read(buffer).also { bytesRead = it } != -1) {
                                     if (cancellationSignal?.isCanceled == true) {
                                         callback?.onWriteCancelled()
-                                        return@Thread
+                                        return@launch
                                     }
                                     output.write(buffer, 0, bytesRead)
                                 }
@@ -130,7 +132,7 @@ fun PdfActionBottomSheet(
                     } catch (e: Exception) {
                         callback?.onWriteFailed(e.localizedMessage ?: "Print failed")
                     }
-                }.start()
+                }
             }
 
             override fun onLayout(

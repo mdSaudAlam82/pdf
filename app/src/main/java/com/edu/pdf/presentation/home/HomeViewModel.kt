@@ -62,7 +62,6 @@ sealed interface HomeEvent {
 // 🌟 FIX: textInput wapas aa gaya aur navigation stack hamesha ke liye gayab hai!
 data class HomeUiState(
     val isLoading: Boolean = true,
-    val textInput: String = "",
     val recentItems: ImmutableList<HomeItem> = persistentListOf(),
     val currentFolders: ImmutableList<HomeItem.FolderItem> = persistentListOf(),
     val favoritePdfs: ImmutableList<PdfFile> = persistentListOf(),
@@ -86,8 +85,6 @@ sealed interface HomeAction {
     data class OpenSheet(val state: HomeSheetState) : HomeAction
     data object CloseSheet : HomeAction
 
-    // 🌟 MVI FIX: UI ab Action ke sath Text nahi bhejega
-    data class OnTextInputChange(val text: String) : HomeAction
     data class ConfirmCreateFolder(val folderName: String) : HomeAction
     data class ConfirmRename(val item: HomeItem, val newName: String) : HomeAction
     data class ConfirmDelete(val items: List<HomeItem>) : HomeAction
@@ -117,6 +114,8 @@ class HomeViewModel @Inject constructor(
     private val deletePdfsUseCase: DeletePdfsUseCase,
     private val renamePdfUseCase: RenamePdfUseCase,
     private val scanPdfsUseCase: ScanPdfsUseCase,
+    private val createFolderUseCase: com.edu.pdf.domain.usecase.CreateFolderUseCase, // 🌟 NAYA ADD KIYA
+    private val deleteFolderUseCase: com.edu.pdf.domain.usecase.DeleteFolderUseCase, // 🌟 NAYA ADD KIYA
     private val userPreferences: UserPreferences
 ) : ViewModel() {
 
@@ -213,13 +212,13 @@ class HomeViewModel @Inject constructor(
                             val recentFolders = repository.getRecentFolders().first().map { it.folderId }
                             recentPdfs + recentFolders
                         }
-                        1 -> { // 🌟 FIX: All Files Tab (Ab Folders bhi database se aayenge)
+                        1 -> { // 🌟 MVI & MEMORY FIX: All Files Tab
                             val folderIds = repository.getManagedFolders(null, isVault = false).first().map { it.folderId }
-                            val pdfs = repository.getUncategorizedPdfs(_sortType.value).first()
-                            folderIds + pdfs.map { it.id }
+                            val pdfIds = repository.getUncategorizedPdfIdsFast()
+                            folderIds + pdfIds
                         }
-                        2 -> { // Favorites Tab
-                            repository.getFavoritePdfs(_sortType.value).first().map { it.id }
+                        2 -> { // 🌟 MVI & MEMORY FIX: Favorites Tab
+                            repository.getFavoritePdfIdsFast()
                         }
                         else -> emptyList()
                     }
@@ -232,15 +231,9 @@ class HomeViewModel @Inject constructor(
                 viewModelScope.launch(Dispatchers.IO) { repository.updateFolderLastOpenedTime(action.folder.folderId, System.currentTimeMillis()) }
                 viewModelScope.launch { _events.send(HomeEvent.NavigateToFolder(action.folder.folderId, action.folder.name, com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB)) }
             }
-            is HomeAction.OpenSheet -> _internalState.update {
-                it.copy(
-                    activeSheetState = action.state,
-                    textInput = if (action.state is HomeSheetState.RenameDialog) action.state.currentName else ""
-                )
-            }
-            is HomeAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = HomeSheetState.None, textInput = "") }
-
-            is HomeAction.OnTextInputChange -> _internalState.update { it.copy(textInput = action.text) }
+            is HomeAction.OpenSheet -> _internalState.update { it.copy(activeSheetState = action.state) }
+            is HomeAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = HomeSheetState.None) }
+// OnTextInputChange wali puri line delete kar di gayi hai
 
             is HomeAction.UpdateSortType -> { _sortType.value = action.type; onAction(HomeAction.CloseSheet) }
 
@@ -249,9 +242,9 @@ class HomeViewModel @Inject constructor(
                 if (folderName.isNotBlank()) {
                     _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                     viewModelScope.launch(Dispatchers.IO) {
-                        repository.createManagedFolder(folderName, null)
+                        createFolderUseCase(folderName, null) // 🌟 REPOSITORY HATA KAR USECASE LAGA DIYA
                         withContext(Dispatchers.Main) {
-                            _internalState.update { it.copy(isProcessing = false, textInput = "") }
+                            _internalState.update { it.copy(isProcessing = false) }
                             _events.send(HomeEvent.ShowSnackbar("Folder created"))
                         }
                     }
@@ -266,7 +259,7 @@ class HomeViewModel @Inject constructor(
                             is HomeItem.FolderItem -> repository.renameManagedFolder(item.folder.folderId, newName)
                             is HomeItem.PdfItem -> renamePdfUseCase(item.pdf, newName)
                         }
-                        withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false, textInput = "") } }
+                        withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) } }
                     }
                 }
             }
@@ -277,7 +270,7 @@ class HomeViewModel @Inject constructor(
                     val foldersToDelete = itemsToDelete.filterIsInstance<HomeItem.FolderItem>()
                     val pdfsToDelete = itemsToDelete.filterIsInstance<HomeItem.PdfItem>().map { it.pdf }
 
-                    foldersToDelete.forEach { repository.deleteManagedFolder(it.folder.folderId) }
+                    foldersToDelete.forEach { deleteFolderUseCase(it.folder.folderId) } // 🌟 REPOSITORY HATA KAR USECASE LAGA DIYA
                     if (pdfsToDelete.isNotEmpty()) deletePdfsUseCase(pdfsToDelete)
 
                     withContext(Dispatchers.Main) {

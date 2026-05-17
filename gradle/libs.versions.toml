@@ -36,7 +36,10 @@ adaptive = "1.2.0"
 firebaseCrashlytics = "20.0.6"
 googleGmsGoogleServices = "4.4.4"
 googleFirebaseCrashlytics = "3.0.7"
-
+mlkit-text-recognition-gms = "19.0.1"
+mlkit-devanagari-gms = "16.0.1"
+generativeAi = "1.53.0"
+mlkitGenAi = "1.0.0-beta2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -94,6 +97,12 @@ androidx-compose-adaptive = { group = "androidx.compose.material3.adaptive", nam
 androidx-compose-adaptive-layout = { group = "androidx.compose.material3.adaptive", name = "adaptive-layout", version.ref = "adaptive" }
 androidx-compose-adaptive-navigation = { group = "androidx.compose.material3.adaptive", name = "adaptive-navigation", version.ref = "adaptive" }
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics", version.ref = "firebaseCrashlytics" }
+mlkit-text-recognition-gms = { group = "com.google.android.gms", name = "play-services-mlkit-text-recognition", version.ref = "mlkit-text-recognition-gms" }
+mlkit-text-recognition-devanagari-gms = { group = "com.google.android.gms", name = "play-services-mlkit-text-recognition-devanagari", version.ref = "mlkit-devanagari-gms" }
+google-ai-client = { group = "com.google.genai", name = "google-genai", version.ref = "generativeAi" }
+google-mlkit-genai = { group = "com.google.mlkit", name = "genai-prompt", version.ref = "mlkitGenAi" }
+
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

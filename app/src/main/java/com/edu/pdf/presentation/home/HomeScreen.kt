@@ -34,7 +34,6 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -235,7 +234,8 @@ fun HomeScreenPure(
                         isGridView = state.isGridView,
                         onSelectAllClick = {
                             onSelectionModeChange(true)
-                            onSelectAll(currentTabItems.map { it.id })
+                            // 🌟 2026 ELITE FIX: स्क्रीन वाली फाइल्स नहीं, Database से सारी 100,000+ फाइल्स सेलेक्ट होंगी!
+                            onAction(HomeAction.SelectAllInTab(currentTab))
                         },
                         onSearchClick = onSearchClick,
                         onSortClick = { onAction(HomeAction.OpenSheet(HomeSheetState.SortPicker)) },
@@ -258,9 +258,9 @@ fun HomeScreenPure(
                     label = "BottomBarSwapAnimation"
                 ) { selectionActive ->
                     if (selectionActive) {
-                        val selectedIdsSet by remember(selectedPdfs) { derivedStateOf { selectedPdfs.toSet() } }
-                        val selectedItemsList by remember(currentTabItems, selectedIdsSet) {
-                            derivedStateOf { if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet } }
+                        val selectedIdsSet = remember(selectedPdfs) { selectedPdfs.toSet() }
+                        val selectedItemsList = remember(currentTabItems, selectedIdsSet) {
+                            if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet }
                         }
 
                         // 🌟 ELITE FIX: Hamara naya Master Bar! (No extra NavigationBar wrapper needed)

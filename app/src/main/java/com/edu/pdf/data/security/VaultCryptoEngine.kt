@@ -7,8 +7,6 @@ import com.google.crypto.tink.StreamingAead
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
 import com.google.crypto.tink.streamingaead.StreamingAeadConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -47,18 +45,4 @@ class VaultCryptoEngine @Inject constructor(
         return streamingAead.newDecryptingStream(encryptedFile.inputStream(), aad)
     }
 
-    suspend fun secureCopy(inputStream: InputStream, outputStream: OutputStream) {
-        withContext(Dispatchers.IO) {
-            inputStream.use { input ->
-                outputStream.use { output ->
-                    val buffer = ByteArray(8 * 1024)
-                    var bytesRead: Int
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                    }
-                    output.flush()
-                }
-            }
-        }
-    }
 }

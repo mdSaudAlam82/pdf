@@ -101,6 +101,11 @@ dependencies {
     implementation(libs.androidx.compose.adaptive)
     implementation(libs.androidx.compose.adaptive.layout)
     implementation(libs.androidx.compose.adaptive.navigation)
+    implementation(libs.mlkit.text.recognition.gms)
+    implementation(libs.mlkit.text.recognition.devanagari.gms)
+    implementation(libs.google.ai.client)
+    implementation(libs.google.mlkit.genai)
+
 
 }
 ksp {

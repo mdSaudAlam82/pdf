@@ -240,4 +240,18 @@ interface PdfDao {
     @RawQuery(observedEntities = [PdfEntity::class])
     fun getPaginatedPdfsInPhysicalFolderRaw(query: SupportSQLiteQuery): PagingSource<Int, PdfEntity>
 
+    // 🌟 FAST SELECT ALL ENGINE (Sirf ID nikalega, Zero Memory Full)
+    @Query("SELECT id FROM pdf_table WHERE isVault = 0 AND (parentPath IS NULL OR parentPath NOT IN (SELECT absolutePath FROM managed_folders WHERE isVault = 0))")
+    suspend fun getUncategorizedPdfIdsFast(): List<String>
+
+    @Query("SELECT id FROM pdf_table WHERE isFavorite = 1 AND isVault = 0")
+    suspend fun getFavoritePdfIdsFast(): List<String>
+
+    @Query("SELECT id FROM pdf_table WHERE parentPath IS :parentPath AND isVault = :isVault")
+    suspend fun getManagedPdfIdsFast(parentPath: String?, isVault: Boolean): List<String>
+
+    @Query("SELECT id FROM pdf_table WHERE path LIKE :folderPath || '/%' AND path NOT LIKE :folderPath || '/%/%' AND isVault = 0")
+    suspend fun getPhysicalFolderPdfIdsFast(folderPath: String): List<String>
+
+
 }

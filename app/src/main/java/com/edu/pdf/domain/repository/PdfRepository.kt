@@ -51,6 +51,9 @@ interface PdfRepository {
 
     fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean = false, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
 
-
+    suspend fun getUncategorizedPdfIdsFast(): List<String>
+    suspend fun getFavoritePdfIdsFast(): List<String>
+    suspend fun getManagedPdfIdsFast(parentPath: String?, isVault: Boolean): List<String>
+    suspend fun getPhysicalFolderPdfIdsFast(folderPath: String): List<String>
 
 }

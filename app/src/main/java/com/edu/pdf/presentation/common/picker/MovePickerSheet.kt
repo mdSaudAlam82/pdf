@@ -187,7 +187,6 @@ private fun MovePickerSheetContent(
                         contentPadding = PaddingValues(bottom = 120.dp)
                     ) {
                         items(state.subFolders, key = { it.folderId }) { folder ->
-                            // ✅ YAHAN PASTE KAREIN
                             com.edu.pdf.presentation.common.PremiumFolderListItem(
                                 name = folder.name,
                                 itemCount = folder.pdfCount,

@@ -388,4 +388,9 @@ class PdfRepositoryImpl @Inject constructor(
             pagingSourceFactory = { pdfDao.getPaginatedPdfsByParentRaw(query) }
         ).flow.map { pagingData -> pagingData.map { it.toDomainModel() } }
     }
+
+    override suspend fun getUncategorizedPdfIdsFast() = pdfDao.getUncategorizedPdfIdsFast()
+    override suspend fun getFavoritePdfIdsFast() = pdfDao.getFavoritePdfIdsFast()
+    override suspend fun getManagedPdfIdsFast(parentPath: String?, isVault: Boolean) = pdfDao.getManagedPdfIdsFast(parentPath, isVault)
+    override suspend fun getPhysicalFolderPdfIdsFast(folderPath: String) = pdfDao.getPhysicalFolderPdfIdsFast(folderPath)
 }

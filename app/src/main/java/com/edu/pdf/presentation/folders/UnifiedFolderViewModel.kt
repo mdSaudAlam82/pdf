@@ -112,7 +112,8 @@ class UnifiedFolderViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
     private val renamePdfUseCase: RenamePdfUseCase,
     private val deletePdfsUseCase: DeletePdfsUseCase,
-    private val deleteFolderUseCase: DeleteFolderUseCase
+    private val deleteFolderUseCase: DeleteFolderUseCase,
+    private val createFolderUseCase: com.edu.pdf.domain.usecase.CreateFolderUseCase // 🌟 NAYA ADD KIYA
 ) : ViewModel() {
 
     private val _currentFolderId = MutableStateFlow<String?>(null)
@@ -136,8 +137,6 @@ class UnifiedFolderViewModel @Inject constructor(
         _internalState.update { it.copy(folderId = decodedId, folderName = decodedName, folderType = type) }
     }
 
-    // 🌟 THE 120FPS MAGIC: Paging 3 for BOTH Physical & Managed Folders!
-    // 🌟 THE 120FPS MAGIC: Paging 3 for BOTH Physical & Managed Folders (With Sorting!)
     val pagedPdfsFlow: Flow<PagingData<HomeItem.PdfItem>> = combine(_currentFolderId, _currentFolderType, _sortType) { id, type, sort ->
         Triple(id, type, sort)
     }.flatMapLatest { (id, type, sort) ->
@@ -222,22 +221,17 @@ class UnifiedFolderViewModel @Inject constructor(
             is UnifiedFolderAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
             is UnifiedFolderAction.SelectAllItems -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    // 1. फोल्डर्स के IDs निकालो
                     val folderIds = uiState.value.folders.map { it.folder.folderId }
-
                     val type = _currentFolderType.value
                     val id = _currentFolderId.value
 
-                    // 2. Database से PDFs निकालो (बिना Paging के)
-                    val pdfs = if (type == FolderType.PHYSICAL_DEVICE) {
-                        repository.getPdfsInPhysicalFolder(id ?: "").first()
+                    // 🌟 MVI & MEMORY FIX: Direct ID Fetch for Folders
+                    val pdfIds = if (type == FolderType.PHYSICAL_DEVICE) {
+                        repository.getPhysicalFolderPdfIdsFast(id ?: "")
                     } else {
-                        repository.getManagedPdfs(id, isVault = type == FolderType.SECURE_VAULT).first()
+                        repository.getManagedPdfIdsFast(id, isVault = type == FolderType.SECURE_VAULT)
                     }
 
-                    val pdfIds = pdfs.map { it.id }
-
-                    // 3. दोनों को मिला कर State अपडेट कर दो
                     val allIds = (folderIds + pdfIds).toPersistentSet()
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(selectedIds = allIds) }
@@ -256,7 +250,7 @@ class UnifiedFolderViewModel @Inject constructor(
                 if (folderName.isNotBlank()) {
                     _internalState.update { it.copy(isProcessing = true) } // 🌟 Sheet abhi band nahi karenge
                     viewModelScope.launch(Dispatchers.IO) {
-                        val result = repository.createManagedFolder(folderName, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
+                        val result = createFolderUseCase(folderName, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT) // 🌟 REPOSITORY HATA KAR USECASE LAGA DIYA
                         withContext(Dispatchers.Main) {
                             _internalState.update { it.copy(isProcessing = false) }
                             if (result.isSuccess) {

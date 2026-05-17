@@ -127,19 +127,12 @@ fun UnifiedFolderScreen(
         }
     }
 
-    val selectedItems by remember(uiState.folders, selectedPdfs, pagedPdfs.itemSnapshotList) {
-        derivedStateOf {
-            if (selectedPdfs.isEmpty()) emptyList()
-            else {
-                val loadedPdfs = pagedPdfs.itemSnapshotList.items // Paging से असली डेटा निकालो
-                selectedPdfs.mapNotNull { id ->
-                    // पहले फोल्डर्स में ढूंढो
-                    val folder = uiState.folders.find { it.folder.folderId == id }
-                    if (folder != null) return@mapNotNull folder
-
-                    // अगर फोल्डर नहीं है, तो असली PDF लिस्ट में से ढूंढो
-                    loadedPdfs.find { it.pdf.id == id }
-                }
+    val selectedItems = remember(uiState.folders, selectedPdfs, pagedPdfs.itemSnapshotList) {
+        if (selectedPdfs.isEmpty()) emptyList()
+        else {
+            val loadedPdfs = pagedPdfs.itemSnapshotList.items
+            selectedPdfs.mapNotNull { id ->
+                uiState.folders.find { it.folder.folderId == id } ?: loadedPdfs.find { it.pdf.id == id }
             }
         }
     }

@@ -120,6 +120,14 @@ fun NavGraphBuilder.homeSection(navController: NavHostController, isTablet: Bool
         val paneNavigator = rememberListDetailPaneScaffoldNavigator<Any>()
         val scope = rememberCoroutineScope()
 
+        // 🌟 2026 ELITE FIX: System Back Button handler for Tablet
+        // Ye line ensure karegi ki tablet par back dabane se sirf detail pane band ho, app nahi
+        androidx.activity.compose.BackHandler(enabled = paneNavigator.canNavigateBack()) {
+            scope.launch {
+                paneNavigator.navigateBack()
+            }
+        }
+
         NavigableListDetailPaneScaffold(
             navigator = paneNavigator,
             listPane = {

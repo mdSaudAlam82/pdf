@@ -67,6 +67,9 @@ fun HomeOverlays(
             val keyboard = LocalSoftwareKeyboardController.current
             var hasRequestedFocus by remember { mutableStateOf(false) }
 
+            // 🌟 NAYA: UI ke andar apna local state
+            var localFolderName by remember { mutableStateOf("") }
+
             AlertDialog(
                 onDismissRequest = {
                     keyboard?.hide()
@@ -75,9 +78,8 @@ fun HomeOverlays(
                 title = { Text("New Folder", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        // 🌟 MVI FIX: Local state हटा दिया, अब सीधा ViewModel का State यूज़ हो रहा है
-                        value = state.textInput,
-                        onValueChange = { onAction(HomeAction.OnTextInputChange(it)) },
+                        value = localFolderName,
+                        onValueChange = { localFolderName = it },
                         label = { Text("Folder Name") },
                         singleLine = true,
                         modifier = Modifier
@@ -101,10 +103,9 @@ fun HomeOverlays(
                     Button(
                         onClick = {
                             keyboard?.hide()
-                            // 🌟 MVI FIX: Action के अंदर नाम भेजने की ज़रूरत नहीं
-                            onAction(HomeAction.ConfirmCreateFolder(state.textInput))
+                            onAction(HomeAction.ConfirmCreateFolder(localFolderName))
                         },
-                        enabled = state.textInput.trim().isNotEmpty(),
+                        enabled = localFolderName.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Create", fontWeight = FontWeight.Bold) }
                 },
@@ -179,6 +180,9 @@ fun HomeOverlays(
             val keyboard = LocalSoftwareKeyboardController.current
             var hasRequestedFocus by remember { mutableStateOf(false) }
 
+            // 🌟 NAYA: Rename ke liye local state
+            var localRenameText by remember { mutableStateOf(activeSheet.currentName) }
+
             AlertDialog(
                 onDismissRequest = {
                     keyboard?.hide()
@@ -187,9 +191,8 @@ fun HomeOverlays(
                 title = { Text("Rename", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     OutlinedTextField(
-                        // 🌟 MVI FIX: Local State की जगह ViewModel का Text
-                        value = state.textInput,
-                        onValueChange = { onAction(HomeAction.OnTextInputChange(it)) },
+                        value = localRenameText,
+                        onValueChange = { localRenameText = it },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -206,11 +209,10 @@ fun HomeOverlays(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
                             cursorColor = MaterialTheme.colorScheme.primary
                         ),
-                        // 🌟 MVI FIX: Clear बटन भी सिर्फ Action भेजेगा
                         trailingIcon = {
-                            if (state.textInput.isNotEmpty()) {
+                            if (localRenameText.isNotEmpty()) {
                                 IconButton(onClick = {
-                                    onAction(HomeAction.OnTextInputChange(""))
+                                    localRenameText = ""
                                 }) {
                                     Icon(Icons.Default.Close, contentDescription = "Clear")
                                 }
@@ -222,10 +224,9 @@ fun HomeOverlays(
                     Button(
                         onClick = {
                             keyboard?.hide()
-                            // 🌟 MVI FIX: Action के अंदर नाम भेजने की ज़रूरत नहीं
-                            onAction(HomeAction.ConfirmRename(activeSheet.item, state.textInput))
+                            onAction(HomeAction.ConfirmRename(activeSheet.item, localRenameText))
                         },
-                        enabled = state.textInput.trim().isNotEmpty(),
+                        enabled = localRenameText.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Rename", fontWeight = FontWeight.Bold) }
                 },
