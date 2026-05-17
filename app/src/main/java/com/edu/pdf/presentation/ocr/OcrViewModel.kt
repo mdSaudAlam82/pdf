@@ -17,20 +17,22 @@ class OcrViewModel @Inject constructor(
     private val textRecognitionEngine: TextRecognitionEngine
 ) : ViewModel() {
 
-    // 🌟 UDF Rule: _state प्राइवेट रहेगा (ताकि UI इसे बदल ना सके)
     private val _state = MutableStateFlow(OcrUiState())
-    // state पब्लिक रहेगा (UI सिर्फ इसे Observe करेगा)
     val state: StateFlow<OcrUiState> = _state.asStateFlow()
 
-    /**
-     * UI सिर्फ इसी फंक्शन को कॉल करेगा और Action पास करेगा
-     */
     fun onAction(action: OcrAction) {
         when (action) {
-            is OcrAction.ExtractText -> processOcr(action.bitmap)
+            // Naya action: Jab user button dabaye
+            is OcrAction.StartLiveText -> processLiveText(action.bitmap)
 
-            OcrAction.CloseSheet -> _state.update {
-                it.copy(isSheetOpen = false, extractedText = "")
+            // Naya action: Jab user cancel kare
+            OcrAction.StopLiveText -> _state.update {
+                it.copy(
+                    isLiveTextActive = false,
+                    capturedBitmap = null, // Photo memory se hata do
+                    extractedBlocks = emptyList(), // Text memory se hata do
+                    errorMessage = null
+                )
             }
 
             OcrAction.ClearError -> _state.update {
@@ -39,21 +41,26 @@ class OcrViewModel @Inject constructor(
         }
     }
 
-    private fun processOcr(bitmap: Bitmap) {
+    private fun processLiveText(bitmap: Bitmap) {
         viewModelScope.launch {
-            // 1. Loading शुरू करो और Sheet ओपन करो
+            // 1. Loading shuru karo, Live mode ON karo, aur screenshot (bitmap) memory me save karo
             _state.update {
-                it.copy(isLoading = true, isSheetOpen = true, errorMessage = null)
+                it.copy(
+                    isLoading = true,
+                    isLiveTextActive = true,
+                    capturedBitmap = bitmap,
+                    errorMessage = null
+                )
             }
 
-            // 2. Engine से टेक्स्ट निकालो (Background thread)
+            // 2. Engine se blocks (Text + Coordinates) nikaalo
             val result = textRecognitionEngine.extractTextFromBitmap(bitmap)
 
-            // 3. Kotlin Result API (Success/Failure handle करना)
+            // 3. Result aane par UI ko batao
             result.fold(
-                onSuccess = { text ->
+                onSuccess = { blocks ->
                     _state.update {
-                        it.copy(isLoading = false, extractedText = text)
+                        it.copy(isLoading = false, extractedBlocks = blocks)
                     }
                 },
                 onFailure = { error ->

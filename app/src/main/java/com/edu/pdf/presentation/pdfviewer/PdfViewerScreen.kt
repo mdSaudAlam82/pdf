@@ -59,10 +59,9 @@ import androidx.fragment.compose.AndroidFragment
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
+import com.edu.pdf.presentation.ocr.LiveTextOverlay
 import com.edu.pdf.presentation.ocr.OcrAction
-import com.edu.pdf.presentation.ocr.OcrScanningOverlay
 import com.edu.pdf.presentation.ocr.OcrViewModel
-import com.edu.pdf.presentation.ocr.SmartOcrPeekSheet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,10 +96,10 @@ fun PdfViewerScreen(
         }
     }
 
+    // 🌟 Predictive Back Logic updated for Live Text
     BackHandler {
-        // 🌟 OCR शीट खुली है तो पहले उसे बंद करो
-        if (ocrState.isSheetOpen) {
-            ocrViewModel.onAction(OcrAction.CloseSheet)
+        if (ocrState.isLiveTextActive) {
+            ocrViewModel.onAction(OcrAction.StopLiveText) // Sirf jadoo band hoga, app nahi
         }
         else if (uiState.isSearchActive) {
             viewModel.onAction(PdfViewerAction.ToggleSearch)
@@ -124,10 +123,10 @@ fun PdfViewerScreen(
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // 🌟 THE OVERLAY BOX: यह Box सब कुछ एक के ऊपर एक स्टैक (Stack) करेगा
+        // 🌟 THE OVERLAY BOX: Ye Box sab kuch ek ke upar ek stack karega
         Box(modifier = Modifier.fillMaxSize()) {
 
-            // 🌟 1. आपका असली PDF और TopBar सबसे नीचे रहेगा (Background Layer)
+            // 🌟 1. Aapka asli PDF aur TopBar sabse niche rahega (Background Layer)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -165,13 +164,13 @@ fun PdfViewerScreen(
                             )
                         }
 
-                        // 🌟 OCR BUTTON
+                        // 🌟 MAGIC BUTTON: Yahan se Screen Freeze hogi aur Live Text chalu hoga
                         IconButton(onClick = {
                             captureScreenForOcr(activity) { capturedBitmap ->
-                                ocrViewModel.onAction(OcrAction.ExtractText(capturedBitmap))
+                                ocrViewModel.onAction(OcrAction.StartLiveText(capturedBitmap))
                             }
                         }) {
-                            Icon(Icons.Default.DocumentScanner, contentDescription = "OCR", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.DocumentScanner, contentDescription = "Live Text OCR", tint = MaterialTheme.colorScheme.primary)
                         }
 
                         IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
@@ -249,22 +248,18 @@ fun PdfViewerScreen(
                 }
             } // Column End
 
-            // 🌟 2. OCR Loading Overlay (हवा में तैरता हुआ लेज़र एनीमेशन)
-            if (ocrState.isLoading) {
-                OcrScanningOverlay()
-            }
-
-            // 🌟 3. OCR Floating Peek Sheet (सबसे ऊपर की लेयर)
-            SmartOcrPeekSheet(
+            // 🌟 2. THE MAGIC: Naya 2026 Live Text Overlay (Sabse upar)
+            // Ye tabhi dikhega jab isLiveTextActive true hoga
+            LiveTextOverlay(
                 state = ocrState,
-                onAction = ocrViewModel::onAction
+                onStopLiveText = { ocrViewModel.onAction(OcrAction.StopLiveText) }
             )
 
         } // Box End
     }
 }
 
-// 🌟 PixelCopy Screenshot Magic
+// 🌟 PixelCopy Screenshot Magic (Native Android Feature)
 fun captureScreenForOcr(activity: Activity, onCaptured: (Bitmap) -> Unit) {
     val window = activity.window
     val view = window.decorView
