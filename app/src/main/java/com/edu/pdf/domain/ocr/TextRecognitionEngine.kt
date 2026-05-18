@@ -9,7 +9,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import javax.inject.Inject
 import kotlin.coroutines.resume
 
-// 🌟 DEFAULT: Sirf poora Block (Paragraph) lenge, aur ye check karenge usme kitni lines hain
 data class OcrTextBlock(
     val text: String,
     val boundingBox: Rect?,
@@ -17,29 +16,28 @@ data class OcrTextBlock(
 )
 
 class TextRecognitionEngine @Inject constructor() {
-
     private val recognizer = TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
 
     suspend fun extractTextFromBitmap(bitmap: Bitmap): Result<List<OcrTextBlock>> = suspendCancellableCoroutine { continuation ->
-
         val image = InputImage.fromBitmap(bitmap, 0)
-
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 if (continuation.isActive) {
-                    val extractedBlocks = mutableListOf<OcrTextBlock>()
+                    val extractedLines = mutableListOf<OcrTextBlock>()
 
-                    // 🌟 RAW ML KIT DEFAULT: Google automatically columns ko alag Blocks me deta hai
                     for (block in visionText.textBlocks) {
-                        extractedBlocks.add(
-                            OcrTextBlock(
-                                text = block.text, // Isme already saari lines sahi order me hoti hain (\n ke sath)
-                                boundingBox = block.boundingBox,
-                                lineCount = block.lines.size // Font size nikalne ke liye
+                        for (line in block.lines) {
+                            extractedLines.add(
+                                OcrTextBlock(
+                                    text = line.text,
+                                    boundingBox = line.boundingBox,
+                                    lineCount = 1
+                                )
                             )
-                        )
+                        }
                     }
-                    continuation.resume(Result.success(extractedBlocks))
+
+                    continuation.resume(Result.success(extractedLines))
                 }
             }
             .addOnFailureListener { exception ->
@@ -47,5 +45,8 @@ class TextRecognitionEngine @Inject constructor() {
                     continuation.resume(Result.failure(exception))
                 }
             }
+
+        continuation.invokeOnCancellation {
+        }
     }
 }

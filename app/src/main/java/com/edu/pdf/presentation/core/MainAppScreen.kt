@@ -290,16 +290,11 @@ fun NavGraphBuilder.placeholderSections(navController: NavHostController, isTabl
         }
     }
 
+    // Purana 'coming soon' wala code replace karein isse:
     composable<Screen.Settings> {
-        Scaffold(
-            topBar = { UniversalTopBar(title = "Settings") },
-            bottomBar = { if (!isTablet) PremiumBottomBar(navController) },
-            containerColor = MaterialTheme.colorScheme.background,
-            contentWindowInsets = WindowInsets(0.dp)
-        ) { paddingValues ->
-            Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
-                Text(text = "Settings coming soon...", color = Color.Gray)
-            }
-        }
+        com.edu.pdf.presentation.settings.SettingsScreen(
+            isTablet = isTablet,
+            navController = navController
+        )
     }
 }

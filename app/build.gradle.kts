@@ -120,7 +120,7 @@ dependencies {
     implementation(libs.mlkit.text.recognition.devanagari.gms)
     implementation(libs.google.ai.client)
     implementation(libs.google.mlkit.genai)
-
+    implementation(libs.androidx.security.crypto)
 
 }
 ksp {

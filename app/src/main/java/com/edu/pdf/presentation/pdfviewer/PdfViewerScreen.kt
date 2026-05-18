@@ -1,10 +1,5 @@
 package com.edu.pdf.presentation.pdfviewer
 
-import android.app.Activity
-import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
-import android.view.PixelCopy
 import android.view.ViewConfiguration
 import androidx.activity.compose.BackHandler
 import androidx.appcompat.app.AppCompatActivity
@@ -24,7 +19,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -51,35 +45,40 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.compose.AndroidFragment
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel // 🌟 WARNING FIXED
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
-import com.edu.pdf.presentation.ocr.LiveTextOverlay
-import com.edu.pdf.presentation.ocr.OcrAction
-import com.edu.pdf.presentation.ocr.OcrViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import android.app.Activity
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import androidx.compose.material.icons.filled.CenterFocusWeak
+import com.edu.pdf.presentation.pdfviewer.ocr.OcrAction
+import com.edu.pdf.presentation.pdfviewer.ocr.OcrSelectionOverlay
+import androidx.core.graphics.createBitmap
 
 @Composable
 fun PdfViewerScreen(
     onBack: () -> Unit,
-    viewModel: PdfViewerViewModel = hiltViewModel()
+    viewModel: PdfViewerViewModel = hiltViewModel(),
+            ocrViewModel: com.edu.pdf.presentation.pdfviewer.ocr.OcrViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val activity = context as? AppCompatActivity ?: return
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // 🌟 OCR View Model & State
-    val ocrViewModel: OcrViewModel = hiltViewModel()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val ocrState by ocrViewModel.state.collectAsStateWithLifecycle()
 
     val pdfUri = uiState.pdfUri
+
     val window = activity.window
     val insetsController = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
     val touchSlop = remember { ViewConfiguration.get(context).scaledTouchSlop }
@@ -96,37 +95,37 @@ fun PdfViewerScreen(
         }
     }
 
-    // 🌟 Predictive Back Logic updated for Live Text
+    // 🌟 CLEAN BACK HANDLER
+    // 🌟 SMART BACK HANDLER: OCR -> Search -> Exit Screen
     BackHandler {
         if (ocrState.isLiveTextActive) {
-            ocrViewModel.onAction(OcrAction.StopLiveText) // Sirf jadoo band hoga, app nahi
-        }
-        else if (uiState.isSearchActive) {
+            // 1. अगर OCR (नीले बक्से) चालू हैं, तो बैक दबाने पर पहले उन्हें बंद करो
+            ocrViewModel.onAction(OcrAction.StopLiveText)
+        } else if (uiState.isSearchActive) {
+            // 2. अगर सर्च चालू है, तो उसे बंद करो
             viewModel.onAction(PdfViewerAction.ToggleSearch)
         } else {
+            // 3. अगर सब कुछ बंद है, तो ही PDF Viewer से बाहर निकलो
             insetsController.show(WindowInsetsCompat.Type.statusBars())
             onBack()
         }
     }
 
     DisposableEffect(Unit) {
-        onDispose { insetsController.show(WindowInsetsCompat.Type.statusBars()) }
+        onDispose {
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+        }
     }
 
-    val darkColorMatrix = remember {
-        ColorMatrix(floatArrayOf(
-            -1f,  0f,  0f,  0f, 255f,
-            0f, -1f,  0f,  0f, 255f,
-            0f,  0f, -1f,  0f, 255f,
-            0f,  0f,  0f,  1f,   0f
-        ))
-    }
+    val darkColorMatrix = remember { ColorMatrix(floatArrayOf(
+        -1f, 0f, 0f, 0f, 255f,
+        0f, -1f, 0f, 0f, 255f,
+        0f, 0f, -1f, 0f, 255f,
+        0f, 0f, 0f, 1f, 0f
+    )) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // 🌟 THE OVERLAY BOX: Ye Box sab kuch ek ke upar ek stack karega
         Box(modifier = Modifier.fillMaxSize()) {
-
-            // 🌟 1. Aapka asli PDF aur TopBar sabse niche rahega (Background Layer)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -163,14 +162,16 @@ fun PdfViewerScreen(
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
-
-                        // 🌟 MAGIC BUTTON: Yahan se Screen Freeze hogi aur Live Text chalu hoga
-                        IconButton(onClick = {
-                            captureScreenForOcr(activity) { capturedBitmap ->
-                                ocrViewModel.onAction(OcrAction.StartLiveText(capturedBitmap))
+                        // 🌟 NAYA: OCR Scanner Button (बिना DocumentScanner वाले आइकॉन के)
+                        IconButton(
+                            onClick = {
+                                // बैकग्राउंड में फोटो लेंगे ताकि स्क्रीन फ्रीज़ ना हो!
+                                captureScreenNonBlocking(activity) { bitmap ->
+                                    ocrViewModel.onAction(OcrAction.StartLiveText(bitmap))
+                                }
                             }
-                        }) {
-                            Icon(Icons.Default.DocumentScanner, contentDescription = "Live Text OCR", tint = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(Icons.Default.CenterFocusWeak, contentDescription = "Scan Text", tint = MaterialTheme.colorScheme.onSurface)
                         }
 
                         IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
@@ -178,18 +179,19 @@ fun PdfViewerScreen(
                         }
                     }
                 }
+
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                         .then(
-                            if (uiState.isSearchActive) Modifier else Modifier.pointerInput(Unit) {
+                            if (uiState.isSearchActive) Modifier
+                            else Modifier.pointerInput(Unit) {
                                 awaitPointerEventScope {
                                     while (true) {
                                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                         val downTime = System.currentTimeMillis()
                                         var isTap = true
-
                                         do {
                                             val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                                             if (event.changes.size > 1) {
@@ -202,9 +204,7 @@ fun PdfViewerScreen(
                                                 if (uiState.isTopBarVisible) viewModel.onAction(PdfViewerAction.SetTopBarVisible(false))
                                             }
                                         } while (event.changes.any { it.pressed })
-
                                         val upTime = System.currentTimeMillis()
-
                                         if (isTap && (upTime - downTime) < 200) {
                                             if (tapJob?.isActive == true) {
                                                 tapJob?.cancel()
@@ -224,9 +224,7 @@ fun PdfViewerScreen(
                         AndroidFragment<PdfViewerFragment>(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer {
-                                    if (uiState.isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix)
-                                },
+                                .graphicsLayer { if (uiState.isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix) },
                             onUpdate = { fragment ->
                                 if (fragment.documentUri != pdfUri) {
                                     fragment.documentUri = pdfUri
@@ -247,27 +245,27 @@ fun PdfViewerScreen(
                     }
                 }
             } // Column End
-
-            // 🌟 2. THE MAGIC: Naya 2026 Live Text Overlay (Sabse upar)
-            // Ye tabhi dikhega jab isLiveTextActive true hoga
-            LiveTextOverlay(
+            // 🌟 LAYER 2: OCR OVERLAY (यह PDF के ऊपर सैंडविच की तरह आ जाएगा)
+            OcrSelectionOverlay(
                 state = ocrState,
-                onStopLiveText = { ocrViewModel.onAction(OcrAction.StopLiveText) }
+                onAction = { action -> ocrViewModel.onAction(action) }
             )
-
         } // Box End
     }
 }
-
-// 🌟 PixelCopy Screenshot Magic (Native Android Feature)
-fun captureScreenForOcr(activity: Activity, onCaptured: (Bitmap) -> Unit) {
+private fun captureScreenNonBlocking(activity: Activity, onCaptured: (Bitmap) -> Unit) {
     val window = activity.window
     val view = window.decorView
+
+    // मेमोरी में हाई-क्वालिटी फोटो की जगह बना रहे हैं
     val bitmap = createBitmap(view.width, view.height)
 
+    // यह हार्डवेयर-एक्सेलेरेटेड (Hardware-Accelerated) है, इसलिए स्क्रीन नहीं अटकेगी
     PixelCopy.request(window, bitmap, { copyResult ->
         if (copyResult == PixelCopy.SUCCESS) {
-            onCaptured(bitmap)
+            onCaptured(bitmap) // फोटो लेकर OCR को दे दी
+        } else {
+            bitmap.recycle() // अगर कोई एरर आया, तो मेमोरी से कचरा साफ़ कर दो (No memory leak!)
         }
     }, Handler(Looper.getMainLooper()))
 }

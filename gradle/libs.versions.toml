@@ -38,8 +38,9 @@ googleGmsGoogleServices = "4.4.4"
 googleFirebaseCrashlytics = "3.0.7"
 mlkit-text-recognition-gms = "19.0.1"
 mlkit-devanagari-gms = "16.0.1"
-generativeAi = "1.53.0"
+generativeAi = "0.9.0"
 mlkitGenAi = "1.0.0-beta2"
+securityCrypto = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -99,9 +100,9 @@ androidx-compose-adaptive-navigation = { group = "androidx.compose.material3.ada
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics", version.ref = "firebaseCrashlytics" }
 mlkit-text-recognition-gms = { group = "com.google.android.gms", name = "play-services-mlkit-text-recognition", version.ref = "mlkit-text-recognition-gms" }
 mlkit-text-recognition-devanagari-gms = { group = "com.google.android.gms", name = "play-services-mlkit-text-recognition-devanagari", version.ref = "mlkit-devanagari-gms" }
-google-ai-client = { group = "com.google.genai", name = "google-genai", version.ref = "generativeAi" }
+google-ai-client = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeAi" }
 google-mlkit-genai = { group = "com.google.mlkit", name = "genai-prompt", version.ref = "mlkitGenAi" }
-
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

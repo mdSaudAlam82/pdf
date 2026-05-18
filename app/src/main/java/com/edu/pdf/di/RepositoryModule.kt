@@ -18,4 +18,10 @@ abstract class RepositoryModule {
     abstract fun bindPdfRepository(
         impl: PdfRepositoryImpl
     ): PdfRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAiRepository(
+        impl: com.edu.pdf.data.repository.AiRepositoryImpl
+    ): com.edu.pdf.domain.repository.AiRepository
 }
