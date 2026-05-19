@@ -61,7 +61,10 @@ class SettingsViewModel @Inject constructor(
 
     private fun verifyAndSave() {
         val currentState = _state.value
-        if (currentState.primaryKey.isBlank()) {
+        // 🌟 FIX 1: Hamesha trim() use karo taaki copy-paste ke hidden spaces hat jayein
+        val primaryKeyTrimmed = currentState.primaryKey.trim()
+
+        if (primaryKeyTrimmed.isBlank()) {
             _state.update { it.copy(validationMessage = "Primary Key is required!") }
             return
         }
@@ -69,21 +72,44 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(isVerifying = true, validationMessage = null) }
 
         viewModelScope.launch {
-            val isValid = withContext(Dispatchers.IO) {
+            // Hum boolean (true/false) ke bajaye String result lenge taaki error padh sakein
+            val resultMessage = withContext(Dispatchers.IO) {
                 try {
-                    val model = GenerativeModel(modelName = "gemini-1.5-flash", apiKey = currentState.primaryKey)
-                    model.generateContent("ping")
-                    true
+                    val model = GenerativeModel(
+                        modelName = "gemini-2.5-flash",
+                        apiKey = primaryKeyTrimmed
+                    )
+                    // "ping" ki jagah "Hello" bhejo, kabhi-kabhi too-short prompts block ho jate hain
+                    model.generateContent("Hello")
+                    "SUCCESS"
                 } catch (e: Exception) {
-                    false
+                    // 🌟 FIX 2: Asli exception ka message pakdo taaki UI par dikha sakein
+                    e.localizedMessage ?: "Unknown Network Error"
                 }
             }
 
-            if (isValid) {
-                keyManager.saveKeys(currentState.primaryKey, currentState.fallbackKey1, currentState.fallbackKey2)
-                _state.update { it.copy(isVerifying = false, isSuccess = true, validationMessage = "AI Keys Verified & Secured! ✅") }
+            if (resultMessage == "SUCCESS") {
+                keyManager.saveKeys(
+                    primaryKeyTrimmed,
+                    currentState.fallbackKey1.trim(),
+                    currentState.fallbackKey2.trim()
+                )
+                _state.update {
+                    it.copy(
+                        isVerifying = false,
+                        isSuccess = true,
+                        validationMessage = "AI Keys Verified & Secured! ✅"
+                    )
+                }
             } else {
-                _state.update { it.copy(isVerifying = false, isSuccess = false, validationMessage = "Invalid Primary Key. ❌") }
+                // Yahan tumhe sachai pata chalegi ki aakhir API key kyu nahi le raha tha!
+                _state.update {
+                    it.copy(
+                        isVerifying = false,
+                        isSuccess = false,
+                        validationMessage = "Failed: $resultMessage ❌"
+                    )
+                }
             }
         }
     }

@@ -29,7 +29,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -188,26 +187,41 @@ class UnifiedFolderViewModel @Inject constructor(
 
     private val prefsAndTypeFlow = combine(userPreferences.isFolderGridViewFlow, _sortType, _currentFolderType) { isGrid, sort, type -> Triple(isGrid, sort, type) }
 
+    // 🌟 ELITE FIX: Database aur preferences ki calculation ko ek alag flow mein rakha
+// Ab typing karne par DB wapas run nahi hoga!
+    private val heavyDatabaseFlow = combine(
+        foldersFlow,
+        breadcrumbsFlow,
+        repository.getAllManagedFolders(isVault = false),
+        prefsAndTypeFlow
+    ) { folders, breadcrumbs, tree, prefs ->
+        // Bas data ko return kar do
+        data class DbState(val folders: ImmutableList<HomeItem.FolderItem>, val breadcrumbs: ImmutableList<Folder>, val tree: List<Folder>, val prefs: Triple<Boolean, SortType, FolderType>)
+        DbState(folders, breadcrumbs, tree, prefs)
+    }.flowOn(Dispatchers.Default)
+
+    // 🌟 UI STATE: Ab yahan Database aur User Input (text) merge honge bina DB ko re-run kiye
     val uiState: StateFlow<UnifiedFolderUiState> = combine(
-        foldersFlow, breadcrumbsFlow, repository.getAllManagedFolders(isVault = false), prefsAndTypeFlow, _internalState
-    ) { folders, breadcrumbs, tree, prefs, internal ->
-        val (isGrid, sort, type) = prefs
+        heavyDatabaseFlow,
+        _internalState
+    ) { dbData, internal ->
+        val (isGrid, sort, type) = dbData.prefs
         val isPhysical = type == FolderType.PHYSICAL_DEVICE
         val isVault = type == FolderType.SECURE_VAULT
 
         internal.copy(
             isLoading = false,
-            folders = folders,
-            breadcrumbs = breadcrumbs,
-            foldersTree = tree.toImmutableList(),
+            folders = dbData.folders,
+            breadcrumbs = dbData.breadcrumbs,
+            foldersTree = dbData.tree.toImmutableList(),
             isGridView = isGrid,
             sortType = sort,
             canCreateSubFolders = !isPhysical && !isVault,
             canImport = !isPhysical,
             canRenameOrDelete = !isPhysical,
-            shouldShowBreadcrumbs = !isPhysical // 🌟 Yahan set hoga ki Folder tab me nahi dikhana hai
+            shouldShowBreadcrumbs = !isPhysical
         )
-    }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnifiedFolderUiState())
 
     fun onAction(action: UnifiedFolderAction) {
         when (action) {

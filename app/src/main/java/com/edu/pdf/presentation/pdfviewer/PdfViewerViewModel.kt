@@ -15,7 +15,9 @@ data class PdfViewerUiState(
     val pdfUri: Uri? = null,
     val isTopBarVisible: Boolean = true,
     val isNightMode: Boolean = false,
-    val isSearchActive: Boolean = false
+    val isSearchActive: Boolean = false,
+    val currentPageNumber: Int = 1,      // 🌟 NAYA
+    val pdfFileName: String = ""          // 🌟 NAYA
 )
 
 sealed interface PdfViewerAction {
@@ -39,7 +41,8 @@ class PdfViewerViewModel @Inject constructor(
             if (it.startsWith("content://") || it.startsWith("file://")) it.toUri()
             else Uri.fromFile(File(it))
         }
-        _uiState.update { it.copy(pdfUri = uri) }
+        val fileName = path?.let { File(it).nameWithoutExtension } ?: ""
+        _uiState.update { it.copy(pdfUri = uri, pdfFileName = fileName) }
     }
 
     fun onAction(action: PdfViewerAction) {

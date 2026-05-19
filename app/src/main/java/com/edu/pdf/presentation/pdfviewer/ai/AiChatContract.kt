@@ -1,17 +1,44 @@
 package com.edu.pdf.presentation.pdfviewer.ai
 
+import androidx.compose.runtime.Immutable
 import com.edu.pdf.domain.model.ChatMessage
 
-// 1. STATE: Jo UI ko dikhega
+// 🌟 WORLD STANDARD: Bitmap KABHI State mein nahi rahega
+// Sirf Page Number track karo, Bitmap ViewModel ke andar WeakReference se handle hoga
+
+@Immutable
 data class AiChatState(
-    val isOpen: Boolean = false,
-    val isTyping: Boolean = false,
-    val chatMessages: List<ChatMessage> = emptyList(),
-    val error: String? = null
+    val messages: List<ChatMessage> = emptyList(),
+    val currentInput: String = "",
+    val isAiThinking: Boolean = false,
+    val isVisible: Boolean = false,
+    val currentPageNumber: Int = 1,    // 🌟 Page number, Bitmap nahi
+    val pdfName: String = "",           // 🌟 Context ke liye
+    val suggestedPrompts: List<String> = listOf(
+        "📝 Summarize this page",
+        "🔍 Explain key concepts",
+        "❓ What are the main points?",
+        "🌐 Translate to Hindi"
+    ),
+    val errorMessage: String? = null
 )
 
-// 2. INTENT/ACTION: Jo UI user ke click karne par bhejega
-sealed interface AiAction {
-    data class ToggleChat(val open: Boolean) : AiAction
-    data class SendMessage(val message: String, val pdfTextContext: String? = null) : AiAction
+sealed interface AiChatAction {
+    data class UpdateInput(val text: String) : AiChatAction
+    data class SendMessage(val query: String) : AiChatAction
+    data class OnSmartPromptClick(val prompt: String) : AiChatAction
+    data class SetContext(
+        val pageNumber: Int,
+        val pdfName: String,
+        val bitmapRef: android.graphics.Bitmap? // 🌟 Direct pass, State mein store nahi
+    ) : AiChatAction
+    data class SetVisibility(val visible: Boolean) : AiChatAction
+    data object StopStreaming : AiChatAction
+    data object ClearChat : AiChatAction
+    data object DismissError : AiChatAction
+}
+
+sealed interface AiChatEvent {
+    data class ShowError(val message: String) : AiChatEvent
+    data object ScrollToBottom : AiChatEvent
 }
