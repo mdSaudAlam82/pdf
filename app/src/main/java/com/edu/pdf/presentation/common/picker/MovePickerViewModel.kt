@@ -22,6 +22,17 @@ class MovePickerViewModel @Inject constructor(
     private val _events = Channel<MovePickerEvent>()
     val events = _events.receiveAsFlow()
 
+    init {
+        // 🌟 AUTOMATIC FOLDER LOAD: Kisi bhi screen se khule, ye khud folders load karega
+        viewModelScope.launch {
+            repository.getAllManagedFolders(isVault = false)
+                .onEach { folders ->
+                    onAction(MovePickerAction.UpdateFolders(folders))
+                }
+                .launchIn(this)
+        }
+    }
+
     fun onAction(action: MovePickerAction) {
         when (action) {
             is MovePickerAction.UpdateFolders -> {

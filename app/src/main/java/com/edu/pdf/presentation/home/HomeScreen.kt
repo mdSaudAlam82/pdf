@@ -228,13 +228,28 @@ fun HomeScreenPure(
                         }
                     )
                 } else {
-                    // 🌟 FIX: Home screen ka title hamesha 'Hi Read' rahega aur Tabs hamesha dikhenge
+                    // 🌟 SMART TOP BAR LOGIC
+                    val isRecentTab = currentTab == 0
+                    val isAllFilesTab = currentTab == 1
+                    val isFavTab = currentTab == 2
+
+                    val isEmpty = when (currentTab) {
+                        0 -> state.recentItems.isEmpty()
+                        1 -> state.currentFolders.isEmpty() && pagedPdfs.itemCount == 0
+                        2 -> state.favoritePdfs.isEmpty()
+                        else -> true
+                    }
+
                     UniversalTopBar(
                         title = "Hi Read",
                         isGridView = state.isGridView,
+                        showSearch = true, // Search hamesha dikhega
+                        showCreateFolder = isAllFilesTab, // New Folder sirf All Files me
+                        showSort = !isRecentTab && !isEmpty, // Sort Recent me nahi aur Empty me nahi
+                        showSelectAll = !isEmpty, // Kuch nahi hai to select kya karoge?
+                        showToggleView = !isEmpty, // Empty me List/Grid ki zaroorat nahi
                         onSelectAllClick = {
                             onSelectionModeChange(true)
-                            // 🌟 2026 ELITE FIX: स्क्रीन वाली फाइल्स नहीं, Database से सारी 100,000+ फाइल्स सेलेक्ट होंगी!
                             onAction(HomeAction.SelectAllInTab(currentTab))
                         },
                         onSearchClick = onSearchClick,

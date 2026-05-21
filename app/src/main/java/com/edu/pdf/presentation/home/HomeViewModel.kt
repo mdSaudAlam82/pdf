@@ -4,15 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.cachedIn
 import androidx.paging.map
-import com.edu.pdf.data.preferences.UserPreferences
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.domain.model.SortType
 import com.edu.pdf.domain.repository.PdfRepository
-import com.edu.pdf.domain.usecase.DeletePdfsUseCase
-import com.edu.pdf.domain.usecase.RenamePdfUseCase
-import com.edu.pdf.domain.usecase.ScanPdfsUseCase
+import com.edu.pdf.domain.usecase.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.PersistentSet
@@ -24,21 +21,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import javax.inject.Inject
 
 sealed interface HomeSheetState {
@@ -59,14 +44,13 @@ sealed interface HomeEvent {
     data class NavigateToFolder(val folderId: String, val folderName: String, val type: com.edu.pdf.domain.model.FolderType) : HomeEvent
 }
 
-// 🌟 FIX: textInput wapas aa gaya aur navigation stack hamesha ke liye gayab hai!
 data class HomeUiState(
     val isLoading: Boolean = true,
     val recentItems: ImmutableList<HomeItem> = persistentListOf(),
     val currentFolders: ImmutableList<HomeItem.FolderItem> = persistentListOf(),
     val favoritePdfs: ImmutableList<PdfFile> = persistentListOf(),
-    val foldersTree: ImmutableList<Folder> = persistentListOf(), // 🌟 NAYA: Folders tree ab state ke andar
-    val isRefreshing: Boolean = false, // 🌟 NAYA: Refreshing ab state ke andar
+    val foldersTree: ImmutableList<Folder> = persistentListOf(),
+    val isRefreshing: Boolean = false,
     val isSelectionMode: Boolean = false,
     val selectedIds: PersistentSet<String> = persistentSetOf(),
     val isGridView: Boolean = false,
@@ -80,15 +64,12 @@ sealed interface HomeAction {
     data class ToggleSelection(val id: String) : HomeAction
     data class SetSelectionMode(val enabled: Boolean) : HomeAction
     data class SelectAll(val ids: List<String>) : HomeAction
-
     data class NavigateToVirtualFolder(val folder: Folder) : HomeAction
     data class OpenSheet(val state: HomeSheetState) : HomeAction
     data object CloseSheet : HomeAction
-
     data class ConfirmCreateFolder(val folderName: String) : HomeAction
     data class ConfirmRename(val item: HomeItem, val newName: String) : HomeAction
     data class ConfirmDelete(val items: List<HomeItem>) : HomeAction
-
     data class ConfirmMove(val targetFolderId: String?) : HomeAction
     data class UpdateSortType(val type: SortType) : HomeAction
     data class CreateContextualFolder(val name: String, val parentId: String?) : HomeAction
@@ -102,28 +83,31 @@ sealed interface HomeAction {
     data object OpenAppPdfPicker : HomeAction
     data class ImportFile(val uriString: String) : HomeAction
     data class MovePdfsToCurrentFolder(val pdfIds: List<String>) : HomeAction
-
     data class SelectAllInTab(val tabIndex: Int) : HomeAction
-
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: PdfRepository,
-    private val deletePdfsUseCase: DeletePdfsUseCase,
-    private val renamePdfUseCase: RenamePdfUseCase,
     private val scanPdfsUseCase: ScanPdfsUseCase,
-    private val createFolderUseCase: com.edu.pdf.domain.usecase.CreateFolderUseCase, // 🌟 NAYA ADD KIYA
-    private val deleteFolderUseCase: com.edu.pdf.domain.usecase.DeleteFolderUseCase, // 🌟 NAYA ADD KIYA
-    private val userPreferences: UserPreferences
+    private val renamePdfUseCase: RenamePdfUseCase,
+    private val deletePdfsUseCase: DeletePdfsUseCase,
+    private val createFolderUseCase: CreateFolderUseCase,
+    private val deleteFolderUseCase: DeleteFolderUseCase,
+    private val moveItemsUseCase: MoveItemsUseCase,
+    private val toggleVaultUseCase: ToggleVaultUseCase,
+    private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
+    private val importPdfUseCase: ImportPdfUseCase,
+    private val removeRecentHistoryUseCase: RemoveRecentHistoryUseCase,
+    private val validatePdfFileUseCase: ValidatePdfFileUseCase,
+    private val markPdfAsOpenedUseCase: MarkPdfAsOpenedUseCase,
+    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase
 ) : ViewModel() {
 
-    // 🌟 STRICT MVI: Ek hi Single Source of Truth
     private val _internalState = MutableStateFlow(HomeUiState(isLoading = true, activeSheetState = HomeSheetState.None))
     private var hasInitialized = false
 
-    // 🌟 NAYA: _internalState se sortType nikal kar baki flows ko denge
     private val sortTypeFlow = _internalState.map { it.sortType }.distinctUntilChanged()
 
     private val currentFoldersFlow = sortTypeFlow.flatMapLatest { sort ->
@@ -160,10 +144,10 @@ class HomeViewModel @Inject constructor(
         Triple(recent, folders, favs)
     }
 
-    // 🌟 STRICT MVI FIX: prefDataFlow hata diya! Ab _internalState khud sab handle karega
+    // 🌟 UNIVERSAL SYNC UI STATE
     val uiState: StateFlow<HomeUiState> = combine(
         uiDataFlow,
-        userPreferences.isGridViewFlow,
+        updateUserPreferencesUseCase.userPreferences.isGridViewFlow, // 🌟 SHARED SOURCE
         repository.getAllManagedFolders(isVault = false),
         _internalState
     ) { uiData, isGrid, tree, internal ->
@@ -173,19 +157,16 @@ class HomeViewModel @Inject constructor(
             currentFolders = uiData.second,
             favoritePdfs = uiData.third.toImmutableList(),
             foldersTree = tree.toImmutableList(),
-            isGridView = isGrid
-            // isRefreshing aur sortType automatically 'internal' se aa jayenge!
+            isGridView = isGrid // 🌟 SHARED PREF
         )
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
-
-    private fun scanDeviceForData() { viewModelScope.launch(Dispatchers.IO) { scanPdfsUseCase() } }
 
     private val _events = Channel<HomeEvent>()
     val events = _events.receiveAsFlow()
 
     fun onAction(action: HomeAction) {
         when (action) {
-            is HomeAction.Initialize -> if (!hasInitialized) { scanDeviceForData(); hasInitialized = true }
+            is HomeAction.Initialize -> if (!hasInitialized) { viewModelScope.launch(Dispatchers.IO) { scanPdfsUseCase() }; hasInitialized = true }
             is HomeAction.ToggleSelection -> {
                 val currentSelected = _internalState.value.selectedIds
                 val newSelection = if (currentSelected.contains(action.id)) currentSelected.remove(action.id) else currentSelected.add(action.id)
@@ -193,23 +174,21 @@ class HomeViewModel @Inject constructor(
             }
             is HomeAction.SetSelectionMode -> _internalState.update { it.copy(isSelectionMode = action.enabled, selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds) }
             is HomeAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
-            // ✅ YAHAN YE NAYA CODE PASTE KARO ✅
+            
             is HomeAction.SelectAllInTab -> {
                 viewModelScope.launch(Dispatchers.IO) {
                     val allIds = when (action.tabIndex) {
-                        0 -> { // Recent Tab
+                        0 -> { 
                             val recentPdfs = repository.getRecentPdfs().first().map { it.id }
                             val recentFolders = repository.getRecentFolders().first().map { it.folderId }
                             recentPdfs + recentFolders
                         }
-                        1 -> { // 🌟 MVI & MEMORY FIX: All Files Tab
+                        1 -> { 
                             val folderIds = repository.getManagedFolders(null, isVault = false).first().map { it.folderId }
                             val pdfIds = repository.getUncategorizedPdfIdsFast()
                             folderIds + pdfIds
                         }
-                        2 -> { // 🌟 MVI & MEMORY FIX: Favorites Tab
-                            repository.getFavoritePdfIdsFast()
-                        }
+                        2 -> repository.getFavoritePdfIdsFast()
                         else -> emptyList()
                     }
                     withContext(Dispatchers.Main) {
@@ -217,25 +196,22 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             }
+            
             is HomeAction.NavigateToVirtualFolder -> {
-                viewModelScope.launch(Dispatchers.IO) { repository.updateFolderLastOpenedTime(action.folder.folderId, System.currentTimeMillis()) }
-                viewModelScope.launch { _events.send(HomeEvent.NavigateToFolder(action.folder.folderId, action.folder.name, com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB)) }
+                viewModelScope.launch {
+                    repository.updateFolderLastOpenedTime(action.folder.folderId, System.currentTimeMillis())
+                    _events.send(HomeEvent.NavigateToFolder(action.folder.folderId, action.folder.name, com.edu.pdf.domain.model.FolderType.VIRTUAL_HUB))
+                }
             }
             is HomeAction.OpenSheet -> _internalState.update { it.copy(activeSheetState = action.state) }
             is HomeAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = HomeSheetState.None) }
-// OnTextInputChange wali puri line delete kar di gayi hai
-
-            is HomeAction.UpdateSortType -> {
-                // 🌟 MVI: Directly update single state
-                _internalState.update { it.copy(sortType = action.type, activeSheetState = HomeSheetState.None) }
-            }
+            is HomeAction.UpdateSortType -> _internalState.update { it.copy(sortType = action.type, activeSheetState = HomeSheetState.None) }
 
             is HomeAction.ConfirmCreateFolder -> {
-                val folderName = action.folderName.trim() // 🌟 अब डेटा सीधे action से आ रहा है
-                if (folderName.isNotBlank()) {
+                if (action.folderName.isNotBlank()) {
                     _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                     viewModelScope.launch(Dispatchers.IO) {
-                        createFolderUseCase(folderName, null) // 🌟 REPOSITORY HATA KAR USECASE LAGA DIYA
+                        createFolderUseCase(action.folderName, null)
                         withContext(Dispatchers.Main) {
                             _internalState.update { it.copy(isProcessing = false) }
                             _events.send(HomeEvent.ShowSnackbar("Folder created"))
@@ -243,119 +219,132 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             }
+
             is HomeAction.ConfirmRename -> {
-                val newName = action.newName.trim() // 🌟 अब डेटा सीधे action से आ रहा है
-                if (newName.isNotBlank()) {
+                if (action.newName.isNotBlank()) {
                     _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                     viewModelScope.launch(Dispatchers.IO) {
                         when (val item = action.item) {
-                            is HomeItem.FolderItem -> repository.renameManagedFolder(item.folder.folderId, newName)
-                            is HomeItem.PdfItem -> renamePdfUseCase(item.pdf, newName)
+                            is HomeItem.FolderItem -> repository.renameManagedFolder(item.folder.folderId, action.newName)
+                            is HomeItem.PdfItem -> renamePdfUseCase(item.pdf, action.newName)
                         }
                         withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) } }
                     }
                 }
             }
+
             is HomeAction.ConfirmDelete -> {
-                val itemsToDelete = action.items // 🌟 अब डेटा सीधे action से आ रहा है
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val foldersToDelete = itemsToDelete.filterIsInstance<HomeItem.FolderItem>()
-                    val pdfsToDelete = itemsToDelete.filterIsInstance<HomeItem.PdfItem>().map { it.pdf }
-
-                    foldersToDelete.forEach { deleteFolderUseCase(it.folder.folderId) } // 🌟 REPOSITORY HATA KAR USECASE LAGA DIYA
+                    val foldersToDelete = action.items.filterIsInstance<HomeItem.FolderItem>()
+                    val pdfsToDelete = action.items.filterIsInstance<HomeItem.PdfItem>().map { it.pdf }
+                    foldersToDelete.forEach { deleteFolderUseCase(it.folder.folderId) }
                     if (pdfsToDelete.isNotEmpty()) deletePdfsUseCase(pdfsToDelete)
-
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false, isSelectionMode = false, selectedIds = persistentSetOf()) }
                         _events.send(HomeEvent.ShowSnackbar("Items deleted successfully"))
                     }
                 }
             }
+
             is HomeAction.ConfirmMove -> {
                 val state = _internalState.value.activeSheetState as? HomeSheetState.MovePicker ?: return
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val pdfIds = state.items.filterIsInstance<HomeItem.PdfItem>().map { it.pdf.id }
-                    val folderIds = state.items.filterIsInstance<HomeItem.FolderItem>().map { it.folder.folderId }
-                    if (pdfIds.isNotEmpty()) repository.movePdfsToVirtualFolder(pdfIds, action.targetFolderId, isVault = false)
-                    folderIds.forEach { repository.moveFolderToVirtualFolder(it, action.targetFolderId, isVault = false) }
+                    moveItemsUseCase(state.items, action.targetFolderId, isVault = false)
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false, isSelectionMode = false, selectedIds = persistentSetOf()) }
                         _events.send(HomeEvent.ShowSnackbar("Moved successfully"))
                     }
                 }
             }
+
             is HomeAction.CreateContextualFolder -> {
                 viewModelScope.launch(Dispatchers.IO) {
                     repository.createManagedFolder(action.name, action.parentId)
                     withContext(Dispatchers.Main) { _events.send(HomeEvent.ShowSnackbar("Folder created successfully")) }
                 }
             }
-            is HomeAction.ToggleViewMode -> viewModelScope.launch { userPreferences.saveGridViewPreference(!userPreferences.isGridViewFlow.first()) }
+
+            is HomeAction.ToggleViewMode -> viewModelScope.launch { 
+                updateUserPreferencesUseCase.toggleGridView()
+            }
+
             is HomeAction.RefreshData -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    // 🌟 MVI: Directly update single state
                     _internalState.update { it.copy(isRefreshing = true) }
                     scanPdfsUseCase()
                     delay(800)
                     _internalState.update { it.copy(isRefreshing = false) }
                 }
             }
+
             is HomeAction.ValidateAndOpenPdf -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    val exists = File(action.pdf.path).exists() || repository.checkFileExists(action.pdf.id)
-                    if (exists) {
-                        repository.updateLastOpenedTime(action.pdf.id, System.currentTimeMillis())
+                    validatePdfFileUseCase(action.pdf).onSuccess {
+                        markPdfAsOpenedUseCase(action.pdf.id)
                         withContext(Dispatchers.Main) { _events.send(HomeEvent.NavigateToPdfViewer(action.pdf.path)) }
-                    } else {
-                        withContext(Dispatchers.Main) { _events.send(HomeEvent.ShowSnackbar("File moved or deleted externally.")) }
-                        deletePdfsUseCase(listOf(action.pdf))
+                    }.onFailure { e ->
+                        withContext(Dispatchers.Main) { _events.send(HomeEvent.ShowSnackbar(e.message ?: "File not found")) }
                     }
                 }
             }
-            is HomeAction.ToggleFavorite -> viewModelScope.launch { repository.toggleFavorite(action.pdf.id, !action.pdf.isFavorite) }
+
+            is HomeAction.ToggleFavorite -> viewModelScope.launch { 
+                toggleFavoriteUseCase(action.pdf.id, !action.pdf.isFavorite) 
+            }
+
             is HomeAction.RemoveFromRecent -> viewModelScope.launch(Dispatchers.IO) {
-                action.items.forEach { item ->
-                    if (item is HomeItem.PdfItem) repository.updateLastOpenedTime(item.pdf.id, 0L) else repository.updateFolderLastOpenedTime((item as HomeItem.FolderItem).folder.folderId, 0L)
-                }
+                removeRecentHistoryUseCase(action.items)
                 withContext(Dispatchers.Main) { _internalState.update { it.copy(isSelectionMode = false, selectedIds = persistentSetOf()) } }
             }
+
             is HomeAction.UnfavoritePdfs -> viewModelScope.launch(Dispatchers.IO) {
-                action.pdfs.forEach { repository.toggleFavorite(it.id, false) }
+                action.pdfs.forEach { toggleFavoriteUseCase(it.id, false) }
                 withContext(Dispatchers.Main) { _internalState.update { it.copy(isSelectionMode = false, selectedIds = persistentSetOf()) } }
             }
+
             is HomeAction.ToggleVaultStatus -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val newVaultStatus = !action.pdf.isVault
-                    repository.movePdfsToVirtualFolder(listOf(action.pdf.id), null, isVault = newVaultStatus)
+                    val result = toggleVaultUseCase(action.pdf)
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false) }
-                        _events.send(HomeEvent.ShowSnackbar(if (newVaultStatus) "Secured in Vault" else "Removed from Vault"))
+                        if (result.isSuccess) {
+                            val msg = if (action.pdf.isVault) "Removed from Vault" else "Secured in Vault"
+                            _events.send(HomeEvent.ShowSnackbar(msg))
+                        }
                     }
                 }
             }
-            is HomeAction.OpenAppPdfPicker -> _internalState.update { it.copy(activeSheetState = HomeSheetState.AppPdfPicker) }
+
             is HomeAction.ImportFile -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val result = repository.importPdfFromUri(action.uriString, null, isVault = false, isPhysicalFolder = false)
+                    val result = importPdfUseCase(action.uriString, null, isVault = false)
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false) }
                         _events.send(HomeEvent.ShowSnackbar(if (result.isSuccess) "Imported Successfully" else "Import Failed"))
                     }
                 }
             }
+
             is HomeAction.MovePdfsToCurrentFolder -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    repository.movePdfsToVirtualFolder(action.pdfIds, null, isVault = false)
+                    val items = action.pdfIds.map { id -> 
+                        HomeItem.PdfItem(PdfFile(id = id, name = "", path = "", sizeInBytes = 0, lastModified = 0)) 
+                    }
+                    moveItemsUseCase(items, null, isVault = false)
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false) }
                         _events.send(HomeEvent.ShowSnackbar("Added successfully!"))
                     }
                 }
+            }
+
+            is HomeAction.OpenAppPdfPicker -> {
+                _internalState.update { it.copy(activeSheetState = HomeSheetState.AppPdfPicker) }
             }
         }
     }

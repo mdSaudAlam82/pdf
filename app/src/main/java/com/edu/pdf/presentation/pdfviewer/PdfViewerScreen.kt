@@ -1,6 +1,5 @@
 package com.edu.pdf.presentation.pdfviewer
 
-// 🌟 IMPORTS ME DHYAN DEIN: Humne naye function ka naam AiChatOverlayScreen rakha tha
 import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Handler
@@ -28,6 +27,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CenterFocusWeak
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,12 +44,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,10 +56,10 @@ import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.fragment.compose.AndroidFragment
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
+import com.edu.pdf.presentation.common.PdfActionBottomSheet
 import com.edu.pdf.presentation.pdfviewer.ai.AiChatOverlayScreen
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrAction
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrSelectionOverlay
@@ -82,15 +81,38 @@ fun PdfViewerScreen(
 
     var showAiChat by remember { mutableStateOf(false) }
     var currentCapturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showActionSheet by remember { mutableStateOf(false) }
+
+    // 🌟 MOVE PICKER STATE
+    var showMovePicker by remember { mutableStateOf(false) }
+
+    // 🌟 RENAME DIALOG STATE
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameInput by remember { mutableStateOf("") }
 
     val pdfUri = uiState.pdfUri
-
     val window = activity.window
     val insetsController = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
     val touchSlop = remember { ViewConfiguration.get(context).scaledTouchSlop }
     val scope = rememberCoroutineScope()
     var tapJob by remember { mutableStateOf<Job?>(null) }
     val doubleTapTimeout = remember { ViewConfiguration.getDoubleTapTimeout().toLong() }
+    LocalFocusManager.current
+
+    // 🌟 EVENT HANDLING (Back and Toasts)
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is PdfViewerEvent.NavigateBack -> {
+                    insetsController.show(WindowInsetsCompat.Type.statusBars())
+                    onBack()
+                }
+                is PdfViewerEvent.ShowToast -> {
+                    android.widget.Toast.makeText(context, event.message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     LaunchedEffect(uiState.isTopBarVisible) {
         if (uiState.isTopBarVisible) {
@@ -107,8 +129,6 @@ fun PdfViewerScreen(
             currentCapturedBitmap = null
         } else if (ocrState.isLiveTextActive) {
             ocrViewModel.onAction(OcrAction.StopLiveText)
-        } else if (uiState.isSearchActive) {
-            viewModel.onAction(PdfViewerAction.ToggleSearch)
         } else {
             insetsController.show(WindowInsetsCompat.Type.statusBars())
             onBack()
@@ -120,6 +140,7 @@ fun PdfViewerScreen(
             insetsController.show(WindowInsetsCompat.Type.statusBars())
         }
     }
+    val containerId = remember { android.view.View.generateViewId() }
 
     val darkColorMatrix = remember { ColorMatrix(floatArrayOf(
         -1f, 0f, 0f, 0f, 255f,
@@ -158,11 +179,13 @@ fun PdfViewerScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                         Text(
-                            text = "Pro PDF Viewer",
+                            text = uiState.pdfFileName.ifEmpty { "Pro PDF Viewer" },
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f).padding(start = 8.dp),
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleNightMode) }) {
                             Icon(
@@ -199,20 +222,27 @@ fun PdfViewerScreen(
                             )
                         }
 
-                        IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
+                        IconButton(onClick = {
+                            val fragment = activity.supportFragmentManager.findFragmentById(containerId) as? PdfViewerFragment
+                            fragment?.isTextSearchActive = true
+                        }) {
                             Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        IconButton(onClick = { showActionSheet = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More Options",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }
-
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .then(
-                            if (uiState.isSearchActive) Modifier
-                            else Modifier.pointerInput(Unit) {
-                                awaitPointerEventScope {
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
                                     while (true) {
                                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                         val downTime = System.currentTimeMillis()
@@ -244,29 +274,74 @@ fun PdfViewerScreen(
                                 }
                             }
                         )
-                ) {
+                 {
                     if (pdfUri != null) {
-                        AndroidFragment<PdfViewerFragment>(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { if (uiState.isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix) },
-                            onUpdate = { fragment ->
-                                if (fragment.documentUri != pdfUri) {
-                                    fragment.documentUri = pdfUri
+                        // 🌟 ELITE 2026 ROADMAP FIX: Built with hybrid view support
+                        // Built with hybrid view support for Native PDF Tools
+                        // Built with hybrid view support for Native PDF Tools
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            modifier = Modifier.fillMaxSize(),
+                            factory = { _ ->
+                                // ELITE FIX 1: The Absolute Bulletproof Method using pure Android System Theme.
+                                // No Material or AppCompat dependencies needed here!
+                                val themedContext = androidx.appcompat.view.ContextThemeWrapper(
+                                    activity,
+                                    android.R.style.Theme_DeviceDefault_NoActionBar
+                                )
+
+                                val wrapper = android.widget.FrameLayout(themedContext)
+
+                                val container = androidx.fragment.app.FragmentContainerView(themedContext).apply {
+                                    id = containerId
+                                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
                                 }
-                                try {
-                                    if (fragment.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                                        fragment.isTextSearchActive = uiState.isSearchActive
+                                wrapper.addView(container)
+
+                                val fragmentManager = activity.supportFragmentManager
+                                var pdfFragment = fragmentManager.findFragmentById(containerId) as? PdfViewerFragment
+                                if (pdfFragment == null) {
+                                    pdfFragment = PdfViewerFragment()
+                                    fragmentManager.beginTransaction()
+                                        .replace(containerId, pdfFragment)
+                                        .commitAllowingStateLoss()
+                                }
+
+                                wrapper.post { pdfFragment.documentUri = pdfUri }
+                                wrapper
+                            },
+                            update = { view ->
+                                val fragmentManager = activity.supportFragmentManager
+                                val fragment = fragmentManager.findFragmentById(containerId) as? PdfViewerFragment
+
+                                if (fragment != null) {
+                                    if (fragment.documentUri != pdfUri) {
+                                        fragment.documentUri = pdfUri
                                     }
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
+                                }
+
+                                if (uiState.isNightMode) {
+                                    val paint = android.graphics.Paint().apply {
+                                        // ELITE FIX 2: Using values to pass FloatArray correctly
+                                        colorFilter = android.graphics.ColorMatrixColorFilter(darkColorMatrix.values)
+                                    }
+                                    view.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, paint)
+                                } else {
+                                    view.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                                }
+                            },
+                            onRelease = { _ ->
+                                val fragmentManager = activity.supportFragmentManager
+                                val fragment = fragmentManager.findFragmentById(containerId)
+                                if (fragment != null) {
+                                    fragmentManager.beginTransaction()
+                                        .remove(fragment)
+                                        .commitAllowingStateLoss()
                                 }
                             }
                         )
-                    } else {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Failed to load PDF", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
                     }
                 }
             }
@@ -293,6 +368,109 @@ fun PdfViewerScreen(
                     currentCapturedBitmap = null
                 }
             )
+
+            // ==========================================
+            // LAYER 5: PDF ACTION BOTTOM SHEET (FULL POWERED)
+            // ==========================================
+            if (showActionSheet && uiState.pdfFile != null) {
+                PdfActionBottomSheet(
+                    pdf = uiState.pdfFile!!,
+                    onDismiss = { showActionSheet = false },
+
+                    onShare = {
+                        showActionSheet = false
+                        try {
+                            uiState.pdfUri?.let { uri ->
+                                if (uri.scheme == "file") {
+                                    val builder = android.os.StrictMode.VmPolicy.Builder()
+                                    android.os.StrictMode.setVmPolicy(builder.build())
+                                }
+
+                                val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "application/pdf"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(shareIntent, "Share PDF"))
+                            }
+                        } catch (_: Exception) {
+                            android.widget.Toast.makeText(context, "Error: Unable to share file", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+
+                    onFavoriteToggle = {
+                        viewModel.onAction(PdfViewerAction.ToggleFavorite(!uiState.pdfFile!!.isFavorite))
+                    },
+
+                    onDelete = {
+                        showActionSheet = false
+                        viewModel.onAction(PdfViewerAction.DeleteFile)
+                    },
+
+                    onActionClick = { action ->
+                        showActionSheet = false
+                        when (action) {
+                            "Rename" -> {
+                                renameInput = uiState.pdfFileName
+                                showRenameDialog = true
+                            }
+                            "Move to" -> {
+                                showMovePicker = true
+                            }
+                            "Move to Vault", "Remove from Vault" -> {
+                                viewModel.onAction(PdfViewerAction.ToggleVaultStatus)
+                            }
+                            "Print" -> {
+                                viewModel.onAction(PdfViewerAction.PrintFile(context))
+                            }
+                            else -> {
+                                android.widget.Toast.makeText(context, "$action coming soon!", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                )
+            }
+
+            // 🌟 MOVE PICKER DIALOG
+            if (showMovePicker) {
+                com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
+                    folders = emptyList(), // ViewModel internally loads folders
+                    onDismiss = { showMovePicker = false },
+                    onTargetSelected = { targetId ->
+                        viewModel.onAction(PdfViewerAction.MoveToFolder(targetId))
+                    }
+                )
+            }
+
+            // 🌟 RENAME DIALOG (FULL MVI)
+            if (showRenameDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showRenameDialog = false },
+                    title = { androidx.compose.material3.Text("Rename PDF") },
+                    text = {
+                        androidx.compose.material3.TextField(
+                            value = renameInput,
+                            onValueChange = { renameInput = it },
+                            placeholder = { androidx.compose.material3.Text("Enter new name") }
+                        )
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            if (renameInput.isNotBlank()) {
+                                viewModel.onAction(PdfViewerAction.RenameFile(renameInput))
+                            }
+                            showRenameDialog = false
+                        }) {
+                            androidx.compose.material3.Text("OK")
+                        }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { showRenameDialog = false }) {
+                            androidx.compose.material3.Text("Cancel")
+                        }
+                    }
+                )
+            }
 
         } // Box End
     }

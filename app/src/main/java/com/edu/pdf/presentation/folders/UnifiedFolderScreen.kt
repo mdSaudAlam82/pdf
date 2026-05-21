@@ -1,5 +1,10 @@
 package com.edu.pdf.presentation.folders
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -15,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -48,7 +54,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -75,7 +80,7 @@ import com.edu.pdf.presentation.home.HomeAction
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
 import com.edu.pdf.presentation.home.components.UnifiedListItem
-import androidx.compose.foundation.layout.WindowInsets
+
 @Composable
 fun UnifiedFolderScreen(
     folderId: String? = null,
@@ -174,21 +179,22 @@ fun UnifiedFolderScreen(
                     }
                 )
             } else {
+                val totalItems = uiState.folders.size + pagedPdfs.itemCount
+                val isEmpty = totalItems == 0
+
                 UnifiedCustomTopBar(
                     title = uiState.folderName,
                     isGridView = uiState.isGridView,
                     canCreateSubFolders = uiState.canCreateSubFolders,
-                    // 🌟 PURE MVI & ELITE FIX: 'X' dabane par direct root par jump karo!
+                    isEmpty = isEmpty, // 🌟 Naya parameter pass karo
                     onBackClick = { onBreadcrumbNavigate(null) },
                     onAddFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
                     onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                     onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
                     onSelectClick = {
-                        // 🌟 1-CLICK MAGIC: Selection Mode ON करो और तुरंत सब सेलेक्ट कर लो!
                         viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
                         viewModel.onAction(UnifiedFolderAction.SelectAllItems)
                     }
-
                 )
             }
         },
@@ -316,16 +322,57 @@ fun UnifiedFolderScreen(
 }
 
 @Composable
-fun UnifiedCustomTopBar(title: String, isGridView: Boolean, canCreateSubFolders: Boolean, onBackClick: () -> Unit, onAddFolderClick: () -> Unit, onSortClick: () -> Unit, onToggleView: () -> Unit, onSelectClick: () -> Unit) {
+fun UnifiedCustomTopBar(
+    title: String,
+    isGridView: Boolean,
+    canCreateSubFolders: Boolean,
+    isEmpty: Boolean, // 🌟 Naya parameter
+    onBackClick: () -> Unit,
+    onAddFolderClick: () -> Unit,
+    onSortClick: () -> Unit,
+    onToggleView: () -> Unit,
+    onSelectClick: () -> Unit
+) {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             IconButton(onClick = onBackClick) { Icon(Icons.Default.Close, "Close") }
-            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
-            if (canCreateSubFolders) IconButton(onClick = onAddFolderClick) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
-            Row {
-                IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
-                IconButton(onClick = onToggleView) { Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View") }
-                IconButton(onClick = onSelectClick) { Icon(Icons.Outlined.CheckBox, "Select") }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+
+            // 🌟 SMART VISIBILITY: Smoothly slide icons in/out
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (canCreateSubFolders) {
+                    IconButton(onClick = onAddFolderClick) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
+                }
+
+                AnimatedVisibility(
+                    visible = !isEmpty,
+                    enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
+                    exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onSortClick) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
+                        IconButton(onClick = onToggleView) {
+                            Icon(if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, "Toggle View")
+                        }
+                        IconButton(onClick = onSelectClick) { Icon(Icons.Outlined.CheckBox, "Select") }
+                    }
+                }
             }
         }
     }

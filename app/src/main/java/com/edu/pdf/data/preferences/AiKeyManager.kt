@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION") // 🌟 ELITE FIX 1: File-level par warning suppress ki taaki poori file clean ho jaye
+
 package com.edu.pdf.data.preferences
 
 import android.content.Context
@@ -7,11 +9,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-@Suppress("DEPRECATION") // Hides Jetpack Security deprecation warnings
 @Singleton
 class AiKeyManager @Inject constructor(
-    @param:ApplicationContext private val context: Context // Fixed Kotlin 2.x Warning
+    @param:ApplicationContext private val context: Context
 ) {
+    // 🌟 2026 STABLE CONFIG: Using the safest scheme for Android KeyStore
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
@@ -41,5 +43,5 @@ class AiKeyManager @Inject constructor(
         return keys
     }
 
-    fun hasAnyKey(): Boolean = getKeys().isNotEmpty()
+    // 🌟 ELITE FIX 2: hasAnyKey() function ko hata diya gaya hai kyunki wo "Dead Code" tha
 }

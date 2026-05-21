@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.presentation.folders.components.FolderMenuSheet
-import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
+import com.edu.pdf.presentation.common.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.SortBottomSheet
 import java.text.SimpleDateFormat
 import java.util.Date

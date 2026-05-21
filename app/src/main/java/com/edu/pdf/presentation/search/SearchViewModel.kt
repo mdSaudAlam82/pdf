@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.domain.repository.PdfRepository
+import com.edu.pdf.domain.usecase.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -21,6 +22,7 @@ data class SearchUiState(
     val query: String = "",
     val results: ImmutableList<PdfFile> = persistentListOf(),
     val history: ImmutableList<String> = persistentListOf(),
+    val isGridView: Boolean = false,
     val isLoading: Boolean = false,
     val pdfToDelete: PdfFile? = null
 )
@@ -34,11 +36,13 @@ sealed interface SearchAction {
     data object ClearAllHistory : SearchAction
     data class MarkPdfAsOpened(val pdfId: String) : SearchAction
     data class ToggleFavorite(val pdf: PdfFile) : SearchAction
-    // 🌟 MVI FIX: Callbacks हटा दिए गए हैं
     data class RenamePdf(val pdf: PdfFile, val newName: String) : SearchAction
     data class ShowDeleteConfirmation(val pdf: PdfFile) : SearchAction
     data object DismissDeleteConfirmation : SearchAction
     data object ConfirmDeletePdf : SearchAction
+    data class MoveToFolder(val pdf: PdfFile, val targetFolderId: String?) : SearchAction
+    data class ToggleVaultStatus(val pdf: PdfFile) : SearchAction
+    data object ToggleViewMode : SearchAction
 }
 
 // 🌟 MVI EVENT: ViewModel से UI को मैसेज (Toast) भेजने के लिए
@@ -50,6 +54,13 @@ sealed interface SearchEvent {
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val repository: PdfRepository,
+    private val renamePdfUseCase: RenamePdfUseCase,
+    private val deletePdfsUseCase: DeletePdfsUseCase,
+    private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
+    private val markPdfAsOpenedUseCase: MarkPdfAsOpenedUseCase,
+    private val moveItemsUseCase: MoveItemsUseCase,
+    private val toggleVaultUseCase: ToggleVaultUseCase,
+    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
@@ -57,7 +68,7 @@ class SearchViewModel @Inject constructor(
     private val _events = kotlinx.coroutines.channels.Channel<SearchEvent>()
     val events = _events.receiveAsFlow()
 
-    // 🌟 INSTANT SEARCH: Debounce puri tarah hata diya
+    // 🌟 INSTANT SEARCH
     private val searchResultsFlow = _searchQuery
         .map { it.trim() }
         .distinctUntilChanged()
@@ -72,79 +83,70 @@ class SearchViewModel @Inject constructor(
     private val searchHistoryFlow = repository.getRecentSearchQueries()
         .map { it.toImmutableList() }
 
-    // 🌟 SINGLE SOURCE OF TRUTH FOR UI
+    // 🌟 SINGLE SOURCE OF TRUTH FOR UI (Universal Sync)
     val uiState: StateFlow<SearchUiState> = combine(
         _searchQuery,
         searchResultsFlow,
         searchHistoryFlow,
+        updateUserPreferencesUseCase.userPreferences.isGridViewFlow, // 🌟 SHARED SYNC
         _pdfToDelete
-    ) { query, results, history, pdfToDelete ->
+    ) { query, results, history, isGrid, pdfToDelete ->
         SearchUiState(
             query = query,
             results = results,
             history = history,
+            isGridView = isGrid,
             isLoading = false,
             pdfToDelete = pdfToDelete
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.Eagerly, // 🌟 Changed to Eagerly for better test reliability
-        initialValue = SearchUiState(isLoading = false) // 🌟 Set initial loading to false
+        started = SharingStarted.Eagerly,
+        initialValue = SearchUiState(isLoading = false)
     )
 
-    // 🌟 THE REDUCER: UI bas Actions bhejega yahan
     fun onAction(action: SearchAction) {
         when (action) {
-            is SearchAction.OnQueryChange -> {
-                _searchQuery.value = action.query
+            is SearchAction.OnQueryChange -> _searchQuery.value = action.query
+            is SearchAction.ClearSearch -> _searchQuery.value = ""
+            is SearchAction.SaveSearchQuery -> if (action.query.isNotBlank()) {
+                viewModelScope.launch { repository.saveSearchQuery(action.query.trim()) }
             }
-            is SearchAction.ClearSearch -> {
-                _searchQuery.value = ""
+            is SearchAction.RemoveHistoryItem -> viewModelScope.launch { repository.deleteSearchQuery(action.query) }
+            is SearchAction.ClearAllHistory -> viewModelScope.launch { repository.clearAllSearchHistory() }
+            is SearchAction.MarkPdfAsOpened -> viewModelScope.launch { markPdfAsOpenedUseCase(action.pdfId) }
+            is SearchAction.ToggleFavorite -> viewModelScope.launch { toggleFavoriteUseCase(action.pdf.id, !action.pdf.isFavorite) }
+            is SearchAction.RenamePdf -> viewModelScope.launch(Dispatchers.IO) {
+                val success = renamePdfUseCase(action.pdf, action.newName)
+                if (success) _events.send(SearchEvent.ShowSnackbar("Renamed successfully"))
             }
-            is SearchAction.SaveSearchQuery -> {
-                if (action.query.isNotBlank()) {
-                    viewModelScope.launch { repository.saveSearchQuery(action.query.trim()) }
-                }
-            }
-            is SearchAction.RemoveHistoryItem -> {
-                viewModelScope.launch { repository.deleteSearchQuery(action.query) }
-            }
-            is SearchAction.ClearAllHistory -> {
-                viewModelScope.launch { repository.clearAllSearchHistory() }
-            }
-            is SearchAction.MarkPdfAsOpened -> {
-                viewModelScope.launch { repository.updateLastOpenedTime(action.pdfId, System.currentTimeMillis()) }
-            }
-            is SearchAction.ToggleFavorite -> {
-                viewModelScope.launch { repository.toggleFavorite(action.pdf.id, !action.pdf.isFavorite) }
-            }
-            is SearchAction.RenamePdf -> {
-                // 🌟 MVI FIX: Action लेकर Event वापस भेजना
-                viewModelScope.launch(Dispatchers.IO) {
-                    val success = repository.renamePdf(action.pdf, action.newName)
-                    withContext(Dispatchers.Main) {
-                        val msg = if (success) "Renamed successfully" else "Rename failed"
-                        _events.send(SearchEvent.ShowSnackbar(msg))
-                    }
-                }
-            }
-            is SearchAction.ShowDeleteConfirmation -> {
-                _pdfToDelete.value = action.pdf
-            }
-            is SearchAction.DismissDeleteConfirmation -> {
-                _pdfToDelete.value = null
-            }
+            is SearchAction.ShowDeleteConfirmation -> _pdfToDelete.value = action.pdf
+            is SearchAction.DismissDeleteConfirmation -> _pdfToDelete.value = null
             is SearchAction.ConfirmDeletePdf -> {
                 val targetPdf = _pdfToDelete.value
                 if (targetPdf != null) {
                     viewModelScope.launch(Dispatchers.IO) {
-                        repository.deletePdfs(listOf(targetPdf))
+                        deletePdfsUseCase(listOf(targetPdf))
                         withContext(Dispatchers.Main) {
-                            _pdfToDelete.value = null // पॉप-अप बंद करो
+                            _pdfToDelete.value = null
                             _events.send(SearchEvent.ShowSnackbar("File deleted permanently"))
                         }
                     }
                 }
+            }
+            is SearchAction.MoveToFolder -> viewModelScope.launch {
+                val result = moveItemsUseCase(listOf(com.edu.pdf.domain.model.HomeItem.PdfItem(action.pdf)), action.targetFolderId, false)
+                if (result.isSuccess) _events.send(SearchEvent.ShowSnackbar("Moved successfully"))
+            }
+            is SearchAction.ToggleVaultStatus -> viewModelScope.launch {
+                val result = toggleVaultUseCase(action.pdf)
+                if (result.isSuccess) {
+                    val msg = if (action.pdf.isVault) "Removed from Vault" else "Secured in Vault"
+                    _events.send(SearchEvent.ShowSnackbar(msg))
+                }
+            }
+            is SearchAction.ToggleViewMode -> viewModelScope.launch {
+                updateUserPreferencesUseCase.toggleGridView()
             }
         }
     }

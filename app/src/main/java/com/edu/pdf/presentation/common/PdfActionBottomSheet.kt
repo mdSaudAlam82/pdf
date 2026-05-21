@@ -1,4 +1,4 @@
-package com.edu.pdf.presentation.home.components
+package com.edu.pdf.presentation.common
 
 import android.content.Context
 import android.os.Bundle
@@ -70,6 +70,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.edu.pdf.domain.model.PdfFile
+import com.edu.pdf.presentation.home.components.PdfThumbnail
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -113,7 +117,7 @@ fun PdfActionBottomSheet(
 
                 // 🌟 2026 ELITE FIX: Independent Scope जो Bottom Sheet बंद होने पर मरेगा नहीं
                 // 🌟 2026 ELITE FIX: SupervisorJob add kiya taaki errors handle ho sakein aur battery bache
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
                     try {
                         context.contentResolver.openInputStream(pdf.id.toUri())?.use { input ->
                             FileOutputStream(destination?.fileDescriptor).use { output ->

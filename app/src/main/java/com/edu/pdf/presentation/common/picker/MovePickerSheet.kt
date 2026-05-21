@@ -60,7 +60,7 @@ import com.edu.pdf.presentation.common.PremiumBreadcrumbs
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MovePickerSheetRoute(
-    folders: List<Folder>,
+    folders: List<Folder> = emptyList(), // 🌟 Default value added
     onDismiss: () -> Unit,
     onTargetSelected: (String?) -> Unit,
     viewModel: MovePickerViewModel = hiltViewModel()
@@ -68,8 +68,12 @@ fun MovePickerSheetRoute(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
 
+    // 🌟 ELITE FIX: Sirf tabhi update karo jab folders khali na ho (Home screen support)
+    // Viewerscreen ke liye ViewModel ka apna 'init' block kaam karega
     LaunchedEffect(folders) {
-        viewModel.onAction(MovePickerAction.UpdateFolders(folders))
+        if (folders.isNotEmpty()) {
+            viewModel.onAction(MovePickerAction.UpdateFolders(folders))
+        }
     }
 
     LaunchedEffect(Unit) {

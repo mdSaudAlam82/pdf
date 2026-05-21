@@ -1,8 +1,11 @@
 package com.edu.pdf.presentation.pdfviewer.ai
 
+// Deprecated warning fixed
+// Naya alpha import
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOutSine
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -37,8 +40,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -60,16 +65,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.unit.sp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.edu.pdf.domain.model.ChatMessage
 import com.edu.pdf.domain.model.ChatRole
@@ -130,7 +138,6 @@ fun AiChatOverlayScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                // ❌ Purane statusBarsPadding, navigationBarsPadding aur imePadding ko hata kar ye 1 line likho:
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
 
@@ -194,11 +201,13 @@ fun AiChatOverlayScreen(
                 onStopClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.onAction(AiChatAction.StopStreaming)
-                }
+                },
+                modifier = Modifier
             )
         }
     }
 }
+
 
 // ════════════════════════════════════════════════════════════
 // TOP BAR
@@ -220,7 +229,7 @@ private fun AiChatTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                    .padding(horizontal = 4.dp, vertical = 2.dp), // Vertical space reduced from 6 to 2 (Slim Look!)
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onDismiss) {
@@ -231,10 +240,7 @@ private fun AiChatTopBar(
                     )
                 }
 
-                // 🌟 Pulsing AI icon
-                AiIconPulse(modifier = Modifier.size(34.dp))
-
-                Spacer(modifier = Modifier.width(10.dp))
+                // 🌟 ELITE FIX: Yahan se AiIconPulse aur Spacer hata diya gaya hai!
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -271,49 +277,6 @@ private fun AiChatTopBar(
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// PULSING AI ICON
-// ════════════════════════════════════════════════════════════
-
-@Composable
-private fun AiIconPulse(modifier: Modifier = Modifier) {
-    val infiniteTransition = rememberInfiniteTransition(label = "ai_pulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.15f,
-        targetValue = 0.40f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = EaseInOutSine),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glow_alpha"
-    )
-
-    Box(
-        modifier = modifier
-            .background(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = glowAlpha),
-                        Color.Transparent
-                    )
-                ),
-                shape = CircleShape
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.AutoAwesome,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp)
-        )
-    }
-}
-
-// ════════════════════════════════════════════════════════════
-// MESSAGE LIST
-// ════════════════════════════════════════════════════════════
-
 @Composable
 private fun AiMessageList(
     messages: List<ChatMessage>,
@@ -324,31 +287,20 @@ private fun AiMessageList(
     LazyColumn(
         state = listState,
         modifier = modifier,
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 16.dp,
-            bottom = 24.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        // 🌟 ELITE FIX: Side padding hata di taaki full screen feel aaye
+        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp) // Messages ke beech zyada saaf jagah
     ) {
         items(messages, key = { it.id }) { message ->
             AnimatedVisibility(
                 visible = true,
-                enter = fadeIn(tween(200)) + slideInVertically(
-                    initialOffsetY = { it / 4 },
-                    animationSpec = tween(200)
-                )
+                enter = fadeIn(tween(200)) + slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(200))
             ) {
                 AiMessageBubble(message = message)
             }
         }
-
-        // 🌟 Typing indicator — sirf tab show karo jab last message stream nahi kar raha
         if (isThinking && messages.lastOrNull()?.isStreaming == false) {
-            item(key = "typing_indicator") {
-                TypingIndicator()
-            }
+            item(key = "typing_indicator") { TypingIndicator() }
         }
     }
 }
@@ -361,87 +313,66 @@ private fun AiMessageList(
 private fun AiMessageBubble(message: ChatMessage) {
     val isUser = message.role == ChatRole.USER
 
+    // 🌟 Ek taraf se start hoga dono (Gemini Jaisa)
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp), // Sirf sides me thodi jagah
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.Top
     ) {
-
-        // AI Avatar
-        if (!isUser) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(
-                        MaterialTheme.colorScheme.primaryContainer,
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(14.dp)
-                )
+        // Avatar
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .background(
+                    if (isUser) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isUser) {
+                Text("U", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            } else {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(16.dp))
             }
-            Spacer(modifier = Modifier.width(8.dp))
         }
 
-        // Bubble
-        Column(
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.82f else 0.88f),
-            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 18.dp,
-                            topEnd = 18.dp,
-                            bottomStart = if (isUser) 18.dp else 4.dp,
-                            bottomEnd = if (isUser) 4.dp else 18.dp
-                        )
-                    )
-                    .background(
-                        if (isUser) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                // 🌟 Streaming cursor blink effect
+        Spacer(modifier = Modifier.width(16.dp))
+
+        // Content Area (Bina kisi background dabbe ke)
+        Column(modifier = Modifier.weight(1f)) {
+            // Name Label (Jaise Gemini me hota hai)
+            Text(
+                text = if (isUser) "You" else "Read AI",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
+
+            if (!isUser && message.isStreaming && message.text.isEmpty()) {
+                // Breathing Pulse Animation
+                val infiniteTransition = rememberInfiniteTransition(label = "gemini_pulse")
+                val pulseAlpha by infiniteTransition.animateFloat(0.4f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), "pulse_alpha")
+
+                Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(3) { index ->
+                        val dotAlpha by infiniteTransition.animateFloat(0.2f, 1f, infiniteRepeatable(tween(400, delayMillis = index * 150), RepeatMode.Reverse), "dot_$index")
+                        Box(modifier = Modifier.size(8.dp).alpha(pulseAlpha * dotAlpha).background(Brush.linearGradient(listOf(Color(0xFF81D4FA), Color(0xFFCE93D8))), CircleShape))
+                    }
+                }
+            } else {
+                // Simple, flat, beautiful text
                 val displayText = when {
                     message.isStreaming && message.text.isNotEmpty() -> message.text + "▋"
-                    message.isStreaming && message.text.isEmpty() -> "▋"
                     else -> message.text
                 }
-
                 Text(
                     text = displayText,
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
-        }
-
-        // User Avatar
-        if (isUser) {
-            Spacer(modifier = Modifier.width(8.dp))
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "U",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.bodyLarge,
+                    lineHeight = 26.sp // Reading experience better karne ke liye
                 )
             }
         }
@@ -455,77 +386,29 @@ private fun AiMessageBubble(message: ChatMessage) {
 @Composable
 private fun TypingIndicator() {
     val infiniteTransition = rememberInfiniteTransition(label = "typing_dots")
-
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        // AI Avatar
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.AutoAwesome,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(14.dp)
-            )
+        Box(modifier = Modifier.size(32.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(16.dp))
         }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        // Dots Bubble
-        Box(
-            modifier = Modifier
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = 4.dp,
-                        bottomEnd = 18.dp
-                    )
-                )
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(horizontal = 18.dp, vertical = 14.dp)
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Read AI", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 4.dp)) {
                 repeat(3) { dotIndex ->
-                    val dotAlpha by infiniteTransition.animateFloat(
-                        initialValue = 0.25f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(
-                                durationMillis = 500,
-                                delayMillis = dotIndex * 160
-                            ),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "dot_alpha_$dotIndex"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                    alpha = dotAlpha
-                                ),
-                                shape = CircleShape
-                            )
-                    )
+                    val dotAlpha by infiniteTransition.animateFloat(0.25f, 1f, infiniteRepeatable(tween(500, delayMillis = dotIndex * 160), RepeatMode.Reverse), "dot_alpha")
+                    Box(modifier = Modifier.size(7.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = dotAlpha), CircleShape))
                 }
             }
         }
     }
 }
-
 // ════════════════════════════════════════════════════════════
 // EMPTY STATE
 // ════════════════════════════════════════════════════════════
-
 @Composable
 private fun AiEmptyState(
     prompts: List<String>,
@@ -533,17 +416,41 @@ private fun AiEmptyState(
     onPromptClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 🌟 ELITE FIX: Magic Breathing & Floating Animation
+    val infiniteTransition = rememberInfiniteTransition(label = "magic_logo_anim")
+
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = LinearOutSlowInEasing), RepeatMode.Reverse),
+        label = "logo_scale"
+    )
+
+    val floatOffset by infiniteTransition.animateFloat(
+        initialValue = 0f, targetValue = -8f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "logo_float"
+    )
+
     Column(
         modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            // 🌟 Wapas Classic Padding (Thodi space keyboard ke liye)
             .padding(horizontal = 24.dp)
-            .padding(top = 48.dp, bottom = 140.dp), // bottom space for input bar
+            .padding(top = 24.dp, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
+        // 🌟 Wapas Center Alignment
+        verticalArrangement = Arrangement.Center
     ) {
 
-        // Hero Icon
+        // 🌟 Purana Classic Logo (Bina Border) + Naya Breathing Animation
         Box(
             modifier = Modifier
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = floatOffset
+                }
                 .size(84.dp)
                 .background(
                     brush = Brush.radialGradient(

@@ -82,7 +82,7 @@ import com.airbnb.lottie.compose.LottieConstants
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.edu.pdf.R
 import com.edu.pdf.domain.model.PdfFile
-import com.edu.pdf.presentation.home.components.PdfActionBottomSheet
+import com.edu.pdf.presentation.common.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.PdfThumbnail
 import com.edu.pdf.presentation.search.components.HighlightedText
 import kotlinx.coroutines.delay
@@ -101,6 +101,9 @@ fun SearchScreen(
 
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    // 🌟 MOVE PICKER STATE
+    var showMovePickerByPdf by remember { mutableStateOf<PdfFile?>(null) }
+
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     var selectedPdfForMenu by remember { mutableStateOf<PdfFile?>(null) }
@@ -257,11 +260,30 @@ fun SearchScreen(
                             renameDialogPdf = pdf
                             selectedPdfForMenu = null
                         }
+                        "Move to" -> {
+                            showMovePickerByPdf = pdf
+                            selectedPdfForMenu = null
+                        }
+                        "Move to Vault", "Remove from Vault" -> {
+                            viewModel.onAction(SearchAction.ToggleVaultStatus(pdf))
+                            selectedPdfForMenu = null
+                        }
                         else -> {
-                            Toast.makeText(context, "Coming soon!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Feature coming soon!", Toast.LENGTH_SHORT).show()
                             selectedPdfForMenu = null
                         }
                     }
+                }
+            )
+        }
+
+        // 🌟 MOVE PICKER DIALOG
+        val movePdf = showMovePickerByPdf
+        if (movePdf != null) {
+            com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
+                onDismiss = { showMovePickerByPdf = null },
+                onTargetSelected = { targetId ->
+                    viewModel.onAction(SearchAction.MoveToFolder(movePdf, targetId))
                 }
             )
         }

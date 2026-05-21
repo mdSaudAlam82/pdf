@@ -9,6 +9,7 @@ import com.edu.pdf.data.security.VaultCryptoEngine
 import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.domain.repository.PdfRepository
 import com.edu.pdf.domain.usecase.DeletePdfsUseCase
+import com.edu.pdf.domain.usecase.UpdateUserPreferencesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.collections.immutable.ImmutableList
@@ -16,14 +17,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -60,7 +54,7 @@ class VaultViewModel @Inject constructor(
     private val repository: PdfRepository,
     private val cryptoEngine: VaultCryptoEngine,
     private val deletePdfsUseCase: DeletePdfsUseCase,
-    private val userPreferences: UserPreferences
+    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase
 ) : ViewModel() {
 
     private val _internalState = MutableStateFlow(VaultUiState())
@@ -68,14 +62,15 @@ class VaultViewModel @Inject constructor(
     private val _events = Channel<VaultEvent>()
     val events = _events.receiveAsFlow()
 
+    // 🌟 UNIVERSAL SYNC FOR VAULT
     val uiState: StateFlow<VaultUiState> = combine(
         repository.getManagedPdfs(parentPath = null, isVault = true),
-        userPreferences.isFolderGridViewFlow,
+        updateUserPreferencesUseCase.userPreferences.isGridViewFlow, // 🌟 SHARED SOURCE
         _internalState
     ) { pdfs, isGrid, internal ->
         internal.copy(
             vaultPdfs = pdfs.toImmutableList(),
-            isGridView = isGrid,
+            isGridView = isGrid, // 🌟 UI ab shared preference se chalega
             isLoading = false
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, VaultUiState())
@@ -86,8 +81,7 @@ class VaultViewModel @Inject constructor(
             is VaultAction.ClosePicker -> _internalState.update { it.copy(isPickerOpen = false) }
             is VaultAction.ToggleViewMode -> {
                 viewModelScope.launch {
-                    val currentGridState = userPreferences.isFolderGridViewFlow.first()
-                    userPreferences.saveFolderGridViewPreference(!currentGridState)
+                    updateUserPreferencesUseCase.toggleGridView()
                 }
             }
             is VaultAction.OpenPdf -> decryptAndOpenPdf(action.pdfPath)
@@ -119,7 +113,6 @@ class VaultViewModel @Inject constructor(
 
             val secureTempDir = File(context.cacheDir, "vault_temp_view")
             if (!secureTempDir.exists()) secureTempDir.mkdirs()
-            // 🛡️ SECURITY WIPE: Purani viewing file delete karo naya kholne se pehle
             SecurityUtils.wipeVaultTempStorage(context)
 
             val tempFile = File(secureTempDir, "view_${System.currentTimeMillis()}.pdf")

@@ -5,15 +5,12 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.map
-import com.edu.pdf.data.preferences.UserPreferences
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
 import com.edu.pdf.domain.model.HomeItem
 import com.edu.pdf.domain.model.SortType
 import com.edu.pdf.domain.repository.PdfRepository
-import com.edu.pdf.domain.usecase.DeleteFolderUseCase
-import com.edu.pdf.domain.usecase.DeletePdfsUseCase
-import com.edu.pdf.domain.usecase.RenamePdfUseCase
+import com.edu.pdf.domain.usecase.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.PersistentSet
@@ -24,19 +21,7 @@ import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -56,7 +41,6 @@ sealed interface UnifiedFolderSheetState {
 sealed interface UnifiedFolderEvent {
     data class ShowSnackbar(val message: String) : UnifiedFolderEvent
     data object ClearMultiSelection : UnifiedFolderEvent
-
 }
 
 sealed interface UnifiedFolderAction {
@@ -78,11 +62,9 @@ sealed interface UnifiedFolderAction {
     data object OpenAppPdfPicker : UnifiedFolderAction
     data class ToggleVaultStatus(val pdf: com.edu.pdf.domain.model.PdfFile) : UnifiedFolderAction
     data class MovePdfsToCurrentFolder(val pdfIds: List<String>) : UnifiedFolderAction
-
     data object SelectAllItems : UnifiedFolderAction
 }
 
-// 🌟 ELITE FIX: UI State ab aur bhi clean ho gaya! Pdfs ko hata diya, ab wo Paging se aayenge
 data class UnifiedFolderUiState(
     val isLoading: Boolean = true,
     val isProcessing: Boolean = false,
@@ -108,11 +90,15 @@ data class UnifiedFolderUiState(
 @HiltViewModel
 class UnifiedFolderViewModel @Inject constructor(
     private val repository: PdfRepository,
-    private val userPreferences: UserPreferences,
+    private val moveItemsUseCase: MoveItemsUseCase,
+    private val toggleVaultUseCase: ToggleVaultUseCase,
+    private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
+    private val createFolderUseCase: CreateFolderUseCase,
     private val renamePdfUseCase: RenamePdfUseCase,
     private val deletePdfsUseCase: DeletePdfsUseCase,
     private val deleteFolderUseCase: DeleteFolderUseCase,
-    private val createFolderUseCase: com.edu.pdf.domain.usecase.CreateFolderUseCase // 🌟 NAYA ADD KIYA
+    private val importPdfUseCase: ImportPdfUseCase,
+    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase
 ) : ViewModel() {
 
     private val _currentFolderId = MutableStateFlow<String?>(null)
@@ -154,7 +140,6 @@ class UnifiedFolderViewModel @Inject constructor(
             flowOf(persistentListOf())
         } else {
             repository.getManagedFolders(id, isVault = type == FolderType.SECURE_VAULT).map { folders ->
-                // 🌟 Smart Sorting: Jo user ne choose kiya hai wahi apply hoga
                 val sortedFolders = when (sort) {
                     SortType.NAME_ASC -> folders.sortedBy { it.name.lowercase() }
                     SortType.NAME_DESC -> folders.sortedByDescending { it.name.lowercase() }
@@ -185,22 +170,23 @@ class UnifiedFolderViewModel @Inject constructor(
             }
         }
 
-    private val prefsAndTypeFlow = combine(userPreferences.isFolderGridViewFlow, _sortType, _currentFolderType) { isGrid, sort, type -> Triple(isGrid, sort, type) }
+    // 🌟 UNIVERSAL SYNC FOR FOLDERS
+    private val prefsAndTypeFlow = combine(
+        updateUserPreferencesUseCase.userPreferences.isGridViewFlow, // 🌟 MATCHED SOURCE
+        _sortType, 
+        _currentFolderType
+    ) { isGrid, sort, type -> Triple(isGrid, sort, type) }
 
-    // 🌟 ELITE FIX: Database aur preferences ki calculation ko ek alag flow mein rakha
-// Ab typing karne par DB wapas run nahi hoga!
     private val heavyDatabaseFlow = combine(
         foldersFlow,
         breadcrumbsFlow,
         repository.getAllManagedFolders(isVault = false),
         prefsAndTypeFlow
     ) { folders, breadcrumbs, tree, prefs ->
-        // Bas data ko return kar do
         data class DbState(val folders: ImmutableList<HomeItem.FolderItem>, val breadcrumbs: ImmutableList<Folder>, val tree: List<Folder>, val prefs: Triple<Boolean, SortType, FolderType>)
         DbState(folders, breadcrumbs, tree, prefs)
     }.flowOn(Dispatchers.Default)
 
-    // 🌟 UI STATE: Ab yahan Database aur User Input (text) merge honge bina DB ko re-run kiye
     val uiState: StateFlow<UnifiedFolderUiState> = combine(
         heavyDatabaseFlow,
         _internalState
@@ -214,7 +200,7 @@ class UnifiedFolderViewModel @Inject constructor(
             folders = dbData.folders,
             breadcrumbs = dbData.breadcrumbs,
             foldersTree = dbData.tree.toImmutableList(),
-            isGridView = isGrid,
+            isGridView = isGrid, // 🌟 SHARED SOURCE
             sortType = sort,
             canCreateSubFolders = !isPhysical && !isVault,
             canImport = !isPhysical,
@@ -239,7 +225,6 @@ class UnifiedFolderViewModel @Inject constructor(
                     val type = _currentFolderType.value
                     val id = _currentFolderId.value
 
-                    // 🌟 MVI & MEMORY FIX: Direct ID Fetch for Folders
                     val pdfIds = if (type == FolderType.PHYSICAL_DEVICE) {
                         repository.getPhysicalFolderPdfIdsFast(id ?: "")
                     } else {
@@ -256,23 +241,27 @@ class UnifiedFolderViewModel @Inject constructor(
             is UnifiedFolderAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.None, textInput = "") }
             is UnifiedFolderAction.OnTextInputChange -> _internalState.update { it.copy(textInput = action.text) }
             is UnifiedFolderAction.UpdateSortType -> { _sortType.value = action.type; onAction(UnifiedFolderAction.CloseSheet) }
-            is UnifiedFolderAction.ToggleViewMode -> viewModelScope.launch { userPreferences.saveFolderGridViewPreference(!userPreferences.isFolderGridViewFlow.first()) }
-            is UnifiedFolderAction.ToggleFavorite -> viewModelScope.launch { repository.toggleFavorite(action.pdfId, action.isFav) }
+            
+            is UnifiedFolderAction.ToggleViewMode -> viewModelScope.launch { 
+                updateUserPreferencesUseCase.toggleGridView()
+            }
+
+            is UnifiedFolderAction.ToggleFavorite -> viewModelScope.launch { 
+                toggleFavoriteUseCase(action.pdfId, action.isFav) 
+            }
 
             is UnifiedFolderAction.ConfirmCreateFolder -> {
                 val folderName = _internalState.value.textInput.trim()
                 if (folderName.isNotBlank()) {
-                    _internalState.update { it.copy(isProcessing = true) } // 🌟 Sheet abhi band nahi karenge
+                    _internalState.update { it.copy(isProcessing = true) }
                     viewModelScope.launch(Dispatchers.IO) {
-                        val result = createFolderUseCase(folderName, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT) // 🌟 REPOSITORY HATA KAR USECASE LAGA DIYA
+                        val result = createFolderUseCase(folderName, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
                         withContext(Dispatchers.Main) {
                             _internalState.update { it.copy(isProcessing = false) }
                             if (result.isSuccess) {
-                                // Success hone par sheet band karo aur message dikhao
                                 _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.None, textInput = "") }
                                 _events.send(UnifiedFolderEvent.ShowSnackbar("Folder created"))
                             } else {
-                                // Fail hone par error message dikhao (Sheet open rahegi)
                                 _events.send(UnifiedFolderEvent.ShowSnackbar(result.exceptionOrNull()?.message ?: "Error creating folder"))
                             }
                         }
@@ -287,7 +276,7 @@ class UnifiedFolderViewModel @Inject constructor(
                     viewModelScope.launch(Dispatchers.IO) {
                         val result = when (val item = state.item) {
                             is HomeItem.FolderItem -> repository.renameManagedFolder(item.folder.folderId, newName)
-                            is HomeItem.PdfItem -> Result.success(renamePdfUseCase(item.pdf, newName)).map{} // Assume PDF rename doesn't fail for now
+                            is HomeItem.PdfItem -> Result.success(renamePdfUseCase(item.pdf, newName)).map{}
                         }
                         withContext(Dispatchers.Main) {
                             _internalState.update { it.copy(isProcessing = false) }
@@ -314,37 +303,40 @@ class UnifiedFolderViewModel @Inject constructor(
             }
             is UnifiedFolderAction.ConfirmMove -> {
                 val state = _internalState.value.activeSheetState as? UnifiedFolderSheetState.MovePicker ?: return
-                if (action.targetFolderId == _currentFolderId.value) { _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.None) }; return }
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val pdfIds = state.items.filterIsInstance<HomeItem.PdfItem>().map { it.pdf.id }
-                    val folderIds = state.items.filterIsInstance<HomeItem.FolderItem>().map { it.folder.folderId }
-                    if (pdfIds.isNotEmpty()) repository.movePdfsToVirtualFolder(pdfIds, action.targetFolderId, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
-                    folderIds.forEach { repository.moveFolderToVirtualFolder(it, action.targetFolderId, isVault = _currentFolderType.value == FolderType.SECURE_VAULT) }
+                    moveItemsUseCase(state.items, action.targetFolderId, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
                     withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ClearMultiSelection) }
                 }
             }
             is UnifiedFolderAction.ImportFile -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val result = repository.importPdfFromUri(action.uriString, _currentFolderId.value, _currentFolderType.value == FolderType.SECURE_VAULT, _currentFolderType.value == FolderType.PHYSICAL_DEVICE)
-                    withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ShowSnackbar(if (result.isSuccess) "Imported Successfully" else "Import Failed")) }
+                    importPdfUseCase(action.uriString, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
+                    withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ShowSnackbar("Imported Successfully")) }
                 }
             }
             is UnifiedFolderAction.OpenAppPdfPicker -> _internalState.update { it.copy(activeSheetState = UnifiedFolderSheetState.AppPdfPicker) }
+            
             is UnifiedFolderAction.MovePdfsToCurrentFolder -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    repository.movePdfsToVirtualFolder(action.pdfIds, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
+                    val items = action.pdfIds.map { id -> HomeItem.PdfItem(com.edu.pdf.domain.model.PdfFile(id = id, name = "", path = "", sizeInBytes = 0, lastModified = 0)) }
+                    moveItemsUseCase(items, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
                     withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ShowSnackbar("Added successfully!")) }
                 }
             }
             is UnifiedFolderAction.ToggleVaultStatus -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val newVaultStatus = !action.pdf.isVault
-                    repository.movePdfsToVirtualFolder(listOf(action.pdf.id), null, isVault = newVaultStatus)
-                    withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ShowSnackbar(if (newVaultStatus) "Secured in Vault" else "Restored to Public")) }
+                    val result = toggleVaultUseCase(action.pdf)
+                    withContext(Dispatchers.Main) { 
+                        _internalState.update { it.copy(isProcessing = false) }
+                        if (result.isSuccess) {
+                            val msg = if (action.pdf.isVault) "Restored to Public" else "Secured in Vault"
+                            _events.send(UnifiedFolderEvent.ShowSnackbar(msg)) 
+                        }
+                    }
                 }
             }
         }

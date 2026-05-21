@@ -166,9 +166,6 @@ C:\USERS\SAUD\ANDROIDSTUDIOPROJECTS\PDF\APP\SRC\MAIN
 |               |           SettingsScreen.kt
 |               |           SettingsViewModel.kt
 |               |           
-|               +---receiver
-|               |       FileDetectionReceiver.kt
-|               |       
 |               +---ui
 |               |   \---theme
 |               |           Color.kt
@@ -268,14 +265,6 @@ FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\AndroidManifest.xml
                 android:value="androidx.startup"
                 tools:node="remove" />
         </provider>
-
-        <receiver android:name=".receiver.FileDetectionReceiver" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MEDIA_SCANNER_SCAN_FILE" />
-                <data android:scheme="file" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>
 
@@ -286,9 +275,10 @@ FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\AndroidManifest.xml
 package com.edu.pdf
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.ContentObserver
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -305,24 +295,29 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.edu.pdf.data.security.SecurityUtils
+import com.edu.pdf.domain.repository.PdfRepository
 import com.edu.pdf.domain.usecase.ScanPdfsUseCase
-import com.edu.pdf.domain.model.SortType
+import com.edu.pdf.notification.PdfNotificationHelper
 import com.edu.pdf.presentation.core.MainAppScreen
 import com.edu.pdf.ui.theme.PdfTheme
 import com.edu.pdf.worker.PdfDetectionWorker
-import com.edu.pdf.notification.PdfNotificationHelper
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     @Inject lateinit var scanPdfsUseCase: ScanPdfsUseCase
     @Inject lateinit var notificationHelper: PdfNotificationHelper
-    @Inject lateinit var repository: com.edu.pdf.domain.repository.PdfRepository
+    @Inject lateinit var repository: PdfRepository
+
+    // 🌟 ELITE FIX: External PDF Uri ko hold karne ke liye state variable
+    private var externalPdfUri by mutableStateOf<String?>(null)
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -333,20 +328,43 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-        override fun onChange(selfChange: Boolean) {
-            super.onChange(selfChange)
-            lifecycleScope.launch(Dispatchers.IO) {
-                // 1. Scan the device
-                scanPdfsUseCase()
-                
-                // 🌟 INSTANT NOTIFICATION: Jab app khula ho, turant check karo
-                val latest = repository.getAllPdfs(SortType.DATE_DESC).first().firstOrNull()
-                latest?.let { pdf ->
-                    val ageSec = (System.currentTimeMillis() / 1000) - pdf.lastModified
-                    if (ageSec < 10) { // Sirf wahi jo abhi-abhi aayi hai (Instant)
-                        notificationHelper.showNewPdfNotification(pdf.name, pdf.path)
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+            super.onChange(selfChange, uri)
+            this@MainActivity.lifecycleScope.launch(Dispatchers.IO) {
+                if (uri != null) {
+                    try {
+                        contentResolver.query(
+                            uri,
+                            arrayOf(
+                                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                                MediaStore.Files.FileColumns.DATA,
+                                MediaStore.Files.FileColumns.SIZE,       // 🌟 NAYA: File ka size
+                                MediaStore.Files.FileColumns.DATE_ADDED  // 🌟 NAYA: File kab bani
+                            ),
+                            null, null, null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val name = cursor.getString(0) ?: "New Document"
+                                val path = cursor.getString(1) ?: ""
+                                val size = cursor.getLong(2)
+                                val dateAdded = cursor.getLong(3) // Seconds me hota hai
+
+                                val nowSeconds = System.currentTimeMillis() / 1000
+
+                                // 🌟 ELITE FIX 2:
+                                // 1. Name must end with .pdf
+                                // 2. Size > 0 hona chahiye (Downloading/Khali file ignore hogi)
+                                // 3. File pichle 60 seconds me add hui ho (Rename ki hui purani files ignore hongi)
+                                if (name.endsWith(".pdf", ignoreCase = true) && size > 0 && (nowSeconds - dateAdded) < 60) {
+                                    notificationHelper.showNewPdfNotification(name, path)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
                 }
+                scanPdfsUseCase()
             }
         }
     }
@@ -366,9 +384,8 @@ class MainActivity : AppCompatActivity() {
             contentObserver
         )
 
-        // 🌟 DEEP LINK: Click handler will be in the Navigation system
-        // But we catch the path here
-        val pdfPathToOpen = intent.getStringExtra("pdf_to_open")
+        // 🌟 ELITE FIX: App khulne par check karo ki kya koi external PDF aaya hai
+        externalPdfUri = handleIncomingIntent(intent)
 
         setContent {
             PdfTheme {
@@ -376,17 +393,42 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainAppScreen()
+                    // Pass the external PDF state to MainAppScreen
+                    MainAppScreen(
+                        externalPdfUri = externalPdfUri,
+                        onPdfOpened = { externalPdfUri = null } // Reset state after opening
+                    )
                 }
             }
         }
     }
 
+    // 🌟 ELITE FIX: Agar app pehle se background me khula ho aur naya PDF click kiya jaye
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        externalPdfUri = handleIncomingIntent(intent)
+    }
+
+    // Helper function intent data ko filter karne ke liye
+    private fun handleIncomingIntent(intent: Intent?): String? {
+        if (intent == null) return null
+
+        // 1. Notification se aaya hua PDF check karo
+        val notificationPath = intent.getStringExtra("pdf_to_open")
+        if (!notificationPath.isNullOrBlank()) return notificationPath
+
+        // 2. WhatsApp, File Manager, Chrome se aaya hua PDF check karo
+        if (intent.action == Intent.ACTION_VIEW && intent.type == "application/pdf") {
+            return intent.data?.toString()
+        }
+
+        return null
+    }
+
     private fun checkNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -482,22 +524,22 @@ class PdfThumbnailFetcher(
     private val options: Options
 ) : Fetcher {
 
+    // ✅ NAYA CODE YAHAN PASTE KAREIN
     override suspend fun fetch(): FetchResult? = withContext(renderDispatcher) {
         if (pdf.isVault) return@withContext null
 
         val file = File(pdf.path)
         if (!file.exists() || file.length() == 0L) return@withContext null
 
-        val cacheFolder = File(context.cacheDir, "smart_pdf_thumbnails")
+        val cacheFolder = File(context.cacheDir, "pdf_thumbnails")
         if (!cacheFolder.exists()) cacheFolder.mkdirs()
 
-        // 🌟 THE ELITE FIX: ID aur LastModified dono use karo, taaki PDF edit hone par Thumbnail turant update ho jaye!
-        val uniqueId = java.util.UUID.nameUUIDFromBytes((pdf.id + pdf.lastModified).toByteArray()).toString()
-        val thumbFileName = "$uniqueId.webp"
-        val cachedThumbFile = File(cacheFolder, thumbFileName)
+        // 🌟 ELITE 2026 FIX: 'lastModified' add kar diya taaki edit ki hui PDF ka naya thumbnail bane
+        val pathHash = pdf.path.hashCode().toString()
+        val cacheKey = "${pathHash}_${file.lastModified()}.webp"
+        val cachedThumbFile = File(cacheFolder, cacheKey)
 
-
-        if (cachedThumbFile.exists() && cachedThumbFile.length() > 500) {
+        if (cachedThumbFile.exists()) {
             return@withContext SourceFetchResult(
                 source = ImageSource(
                     file = cachedThumbFile.toOkioPath(),
@@ -507,6 +549,8 @@ class PdfThumbnailFetcher(
                 dataSource = DataSource.DISK
             )
         }
+
+        // (Aapka bacha hua 'try {' wala code yahin se aage badhega, usme koi change nahi hai)
         ensureActive()
 
 
@@ -2638,39 +2682,50 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.edu.pdf.MainActivity
-import com.edu.pdf.R
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PdfNotificationHelper @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private val CHANNEL_ID = "pdf_file_updates" // 🌟 STANDARD CHANNEL
+
+    companion object {
+        private const val CHANNEL_ID = "pdf_file_updates"
+        // 🌟 ELITE FIX 1: Cache to prevent spam/duplicate bursts
+        private val notifiedFiles = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    }
 
     init {
         createNotificationChannel()
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "PDF File Updates", 
-                NotificationManager.IMPORTANCE_DEFAULT // 🌟 STANDARD IMPORTANCE
-            ).apply {
-                description = "Notifies when a PDF is added or changed"
-            }
-            notificationManager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "PDF File Updates",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Notifies when a PDF is added or changed"
+            enableVibration(true)
         }
+        notificationManager.createNotificationChannel(channel)
     }
 
     fun showNewPdfNotification(fileName: String, filePath: String) {
+        val now = System.currentTimeMillis()
+
+        // 🌟 ELITE FIX 1: Agar pichle 60 seconds me is file ka notification bheja hai, toh Cancel karo!
+        val lastNotified = notifiedFiles[filePath] ?: 0L
+        if (now - lastNotified < 60000) {
+            return
+        }
+        notifiedFiles[filePath] = now
+
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             putExtra("pdf_to_open", filePath)
@@ -2685,10 +2740,10 @@ class PdfNotificationHelper @Inject constructor(
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle("PDF Update")
+            .setContentTitle("New PDF Added")
             .setContentText(fileName)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // 🌟 STANDARD PRIORITY
-            .setDefaults(NotificationCompat.DEFAULT_ALL) // 🌟 SYSTEM SOUND/VIBRATE
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
@@ -4151,15 +4206,18 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -4187,13 +4245,29 @@ fun hasStoragePermission(): Boolean {
     return Environment.isExternalStorageManager()
 }
 
+
+
 @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
-fun MainAppScreen() {
+fun MainAppScreen(
+    externalPdfUri: String? = null,
+    onPdfOpened: () -> Unit = {}
+) {
     val navController = rememberNavController()
-    LocalContext.current
 
-    val windowSizeClass = calculateWindowSizeClass(activity = androidx.activity.compose.LocalActivity.current ?: return)
+    // Track external PDF launches for proper back navigation
+    var isExternalLaunch by remember { mutableStateOf(false) }
+
+    LaunchedEffect(externalPdfUri) {
+        if (!externalPdfUri.isNullOrBlank()) {
+            isExternalLaunch = true
+            navController.navigate(Screen.PdfViewer(pdfPath = externalPdfUri))
+            onPdfOpened()
+        }
+    }
+
+    val activity = androidx.activity.compose.LocalActivity.current ?: return
+    val windowSizeClass = calculateWindowSizeClass(activity = activity)
     val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     val startScreen: Screen = remember {
@@ -4201,11 +4275,12 @@ fun MainAppScreen() {
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
-    val isFullScreen = currentRoute?.contains(Screen.PdfViewer::class.simpleName ?: "") == true ||
-            currentRoute?.contains(Screen.Vault::class.simpleName ?: "") == true ||
-            currentRoute?.contains(Screen.Permission::class.simpleName ?: "") == true ||
-            currentRoute?.contains(Screen.Search::class.simpleName ?: "") == true
+    val destination = navBackStackEntry?.destination
+
+    val isFullScreen = destination?.hasRoute<Screen.PdfViewer>() == true ||
+            destination?.hasRoute<Screen.Vault>() == true ||
+            destination?.hasRoute<Screen.Permission>() == true ||
+            destination?.hasRoute<Screen.Search>() == true
 
     Row(modifier = Modifier.fillMaxSize()) {
         if (isTablet && !isFullScreen) {
@@ -4234,7 +4309,11 @@ fun MainAppScreen() {
                 // 🌟 FIX: Sabko properly navController aur isTablet pass kar diya hai
                 homeSection(navController = navController, isTablet = isTablet)
                 searchSection(navController = navController)
-                pdfViewerSection(navController = navController)
+                pdfViewerSection(
+                    navController = navController,
+                    isExternalLaunch = { isExternalLaunch }, // 🌟 ELITE FIX: Curly braces laga diye (Lambda bana diya)
+                    onExternalClosed = { isExternalLaunch = false }
+                )
                 foldersSection(navController = navController, isTablet = isTablet)
                 placeholderSections(navController = navController, isTablet = isTablet)
             }
@@ -4333,8 +4412,28 @@ fun NavGraphBuilder.searchSection(navController: NavHostController) {
     composable<Screen.Search> { SearchScreen(onBackClick = { navController.popBackStack() }, onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) }) }
 }
 
-fun NavGraphBuilder.pdfViewerSection(navController: NavHostController) {
-    composable<Screen.PdfViewer> { backStackEntry -> backStackEntry.toRoute<Screen.PdfViewer>(); PdfViewerScreen(onBack = { navController.popBackStack() }) }
+fun NavGraphBuilder.pdfViewerSection(
+    navController: NavHostController,
+    isExternalLaunch: () -> Boolean = { false },
+    onExternalClosed: () -> Unit = {}
+) {
+    composable<Screen.PdfViewer> { backStackEntry ->
+        backStackEntry.toRoute<Screen.PdfViewer>()
+
+        val activity = androidx.activity.compose.LocalActivity.current
+
+        PdfViewerScreen(onBack = {
+            if (isExternalLaunch()) {
+                // 🌟 ELITE FIX: Pehle state clear karo aur activity ko finish kar do!
+                // Isse app WhatsApp ke task stack se poori tarah mita diya jayega.
+                onExternalClosed()
+                activity?.finish()
+            } else {
+                // Agar app ke andar se khola hai, toh normal back stack pop karo
+                navController.popBackStack()
+            }
+        })
+    }
 }
 
 fun NavGraphBuilder.foldersSection(navController: NavHostController, isTablet: Boolean) {
@@ -7216,37 +7315,34 @@ class HomeViewModel @Inject constructor(
     private val userPreferences: UserPreferences
 ) : ViewModel() {
 
-    private val _sortType = MutableStateFlow(SortType.DATE_DESC)
-    private val _isRefreshing = MutableStateFlow(false)
-
+    // 🌟 STRICT MVI: Ek hi Single Source of Truth
     private val _internalState = MutableStateFlow(HomeUiState(isLoading = true, activeSheetState = HomeSheetState.None))
     private var hasInitialized = false
 
+    // 🌟 NAYA: _internalState se sortType nikal kar baki flows ko denge
+    private val sortTypeFlow = _internalState.map { it.sortType }.distinctUntilChanged()
 
-    // 1. Sirf Folders ke liye Flow
-    // 1. 🌟 ELITE MVI FIX: Folders ab Sort Type ke hisaab se react karenge
-    private val currentFoldersFlow = _sortType.flatMapLatest { sort ->
+    private val currentFoldersFlow = sortTypeFlow.flatMapLatest { sort ->
         repository.getManagedFolders(null, isVault = false).map { folders ->
             val sortedFolders = when (sort) {
                 SortType.NAME_ASC -> folders.sortedBy { it.name.lowercase() }
                 SortType.NAME_DESC -> folders.sortedByDescending { it.name.lowercase() }
                 SortType.DATE_DESC -> folders.sortedByDescending { it.createdAt }
                 SortType.DATE_ASC -> folders.sortedBy { it.createdAt }
-                SortType.SIZE_DESC -> folders.sortedByDescending { it.pdfCount } // Folder ke liye size = file count
+                SortType.SIZE_DESC -> folders.sortedByDescending { it.pdfCount }
                 SortType.SIZE_ASC -> folders.sortedBy { it.pdfCount }
             }
             sortedFolders.map { HomeItem.FolderItem(it) }.toImmutableList()
         }
     }.flowOn(Dispatchers.Default)
 
-    // 2. PDFs ke liye Paging Flow (Strict MVI - UI logic se alag)
-    val pagedUncategorizedPdfsFlow = _sortType.flatMapLatest { sort ->
+    val pagedUncategorizedPdfsFlow = sortTypeFlow.flatMapLatest { sort ->
         repository.getAllPdfsPaged(sort).map { pagingData ->
             pagingData.map { HomeItem.PdfItem(it) }
         }
     }.cachedIn(viewModelScope)
 
-    private val favoritePdfsFlow = _sortType.flatMapLatest { sort -> repository.getFavoritePdfs(sort) }
+    private val favoritePdfsFlow = sortTypeFlow.flatMapLatest { sort -> repository.getFavoritePdfs(sort) }
 
     private val recentItemsFlow = combine(repository.getRecentPdfs(), repository.getRecentFolders()) { recentPdfs, recentFolders ->
         val pdfItems = recentPdfs.map { HomeItem.PdfItem(it) }
@@ -7256,32 +7352,25 @@ class HomeViewModel @Inject constructor(
             .take(50)
     }
 
-    // 🌟 FIX: Data flows ko Triple mein group kar diya taaki 5-flow limit cross na ho
-    // 🌟 FIX: unifiedItemsFlow ki jagah ab currentFoldersFlow aayega
     private val uiDataFlow = combine(recentItemsFlow, currentFoldersFlow, favoritePdfsFlow) { recent, folders, favs ->
         Triple(recent, folders, favs)
     }
 
-    private val prefDataFlow = combine(userPreferences.isGridViewFlow, _sortType, _isRefreshing) { isGrid, sort, refreshing ->
-        Triple(isGrid, sort, refreshing)
-    }
-
-    // Ab hum sirf 4 chizein combine kar rahe hain: uiData, prefData, tree, internal
+    // 🌟 STRICT MVI FIX: prefDataFlow hata diya! Ab _internalState khud sab handle karega
     val uiState: StateFlow<HomeUiState> = combine(
         uiDataFlow,
-        prefDataFlow,
+        userPreferences.isGridViewFlow,
         repository.getAllManagedFolders(isVault = false),
         _internalState
-    ) { uiData, prefData, tree, internal ->
+    ) { uiData, isGrid, tree, internal ->
         internal.copy(
             isLoading = false,
             recentItems = uiData.first.toImmutableList(),
             currentFolders = uiData.second,
             favoritePdfs = uiData.third.toImmutableList(),
             foldersTree = tree.toImmutableList(),
-            isGridView = prefData.first,
-            sortType = prefData.second,
-            isRefreshing = prefData.third
+            isGridView = isGrid
+            // isRefreshing aur sortType automatically 'internal' se aa jayenge!
         )
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
@@ -7332,7 +7421,10 @@ class HomeViewModel @Inject constructor(
             is HomeAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = HomeSheetState.None) }
 // OnTextInputChange wali puri line delete kar di gayi hai
 
-            is HomeAction.UpdateSortType -> { _sortType.value = action.type; onAction(HomeAction.CloseSheet) }
+            is HomeAction.UpdateSortType -> {
+                // 🌟 MVI: Directly update single state
+                _internalState.update { it.copy(sortType = action.type, activeSheetState = HomeSheetState.None) }
+            }
 
             is HomeAction.ConfirmCreateFolder -> {
                 val folderName = action.folderName.trim() // 🌟 अब डेटा सीधे action से आ रहा है
@@ -7399,7 +7491,11 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ToggleViewMode -> viewModelScope.launch { userPreferences.saveGridViewPreference(!userPreferences.isGridViewFlow.first()) }
             is HomeAction.RefreshData -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    _isRefreshing.value = true; scanPdfsUseCase(); delay(800); _isRefreshing.value = false
+                    // 🌟 MVI: Directly update single state
+                    _internalState.update { it.copy(isRefreshing = true) }
+                    scanPdfsUseCase()
+                    delay(800)
+                    _internalState.update { it.copy(isRefreshing = false) }
                 }
             }
             is HomeAction.ValidateAndOpenPdf -> {
@@ -9183,7 +9279,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -9191,7 +9286,6 @@ import androidx.compose.material.icons.filled.CenterFocusWeak
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -9207,12 +9301,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -9220,14 +9313,12 @@ import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.fragment.compose.AndroidFragment
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
+import com.edu.pdf.presentation.pdfviewer.ai.AiChatOverlayScreen
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrAction
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrSelectionOverlay
-// 🌟 IMPORTS ME DHYAN DEIN: Humne naye function ka naam AiChatOverlayScreen rakha tha
-import com.edu.pdf.presentation.pdfviewer.ai.AiChatOverlayScreen
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -9255,6 +9346,7 @@ fun PdfViewerScreen(
     val scope = rememberCoroutineScope()
     var tapJob by remember { mutableStateOf<Job?>(null) }
     val doubleTapTimeout = remember { ViewConfiguration.getDoubleTapTimeout().toLong() }
+    LocalFocusManager.current
 
     LaunchedEffect(uiState.isTopBarVisible) {
         if (uiState.isTopBarVisible) {
@@ -9271,8 +9363,6 @@ fun PdfViewerScreen(
             currentCapturedBitmap = null
         } else if (ocrState.isLiveTextActive) {
             ocrViewModel.onAction(OcrAction.StopLiveText)
-        } else if (uiState.isSearchActive) {
-            viewModel.onAction(PdfViewerAction.ToggleSearch)
         } else {
             insetsController.show(WindowInsetsCompat.Type.statusBars())
             onBack()
@@ -9284,6 +9374,7 @@ fun PdfViewerScreen(
             insetsController.show(WindowInsetsCompat.Type.statusBars())
         }
     }
+    val containerId = remember { android.view.View.generateViewId() }
 
     val darkColorMatrix = remember { ColorMatrix(floatArrayOf(
         -1f, 0f, 0f, 0f, 255f,
@@ -9347,20 +9438,36 @@ fun PdfViewerScreen(
                             Icon(Icons.Default.CenterFocusWeak, contentDescription = "Scan Text", tint = MaterialTheme.colorScheme.onSurface)
                         }
 
-                        IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
+                        // 🌟 ELITE 2026 FIX: AI Button moved to Top Bar
+                        IconButton(
+                            onClick = {
+                                captureScreenNonBlocking(activity) { bitmap ->
+                                    currentCapturedBitmap = bitmap
+                                    showAiChat = true
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Ask AI",
+                                tint = MaterialTheme.colorScheme.primary // Premium Brand Red/Blue Color
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            val fragment = activity.supportFragmentManager.findFragmentById(containerId) as? PdfViewerFragment
+                            fragment?.isTextSearchActive = true
+                        }) {
                             Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }
-
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .then(
-                            if (uiState.isSearchActive) Modifier
-                            else Modifier.pointerInput(Unit) {
-                                awaitPointerEventScope {
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
                                     while (true) {
                                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                         val downTime = System.currentTimeMillis()
@@ -9392,54 +9499,75 @@ fun PdfViewerScreen(
                                 }
                             }
                         )
-                ) {
+                 {
                     if (pdfUri != null) {
-                        AndroidFragment<PdfViewerFragment>(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { if (uiState.isNightMode) colorFilter = ColorFilter.colorMatrix(darkColorMatrix) },
-                            onUpdate = { fragment ->
-                                if (fragment.documentUri != pdfUri) {
-                                    fragment.documentUri = pdfUri
+                        // 🌟 ELITE 2026 ROADMAP FIX: Built with hybrid view support
+                        // Built with hybrid view support for Native PDF Tools
+                        // Built with hybrid view support for Native PDF Tools
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            modifier = Modifier.fillMaxSize(),
+                            factory = { _ ->
+                                // ELITE FIX 1: The Absolute Bulletproof Method using pure Android System Theme.
+                                // No Material or AppCompat dependencies needed here!
+                                val themedContext = androidx.appcompat.view.ContextThemeWrapper(
+                                    activity,
+                                    android.R.style.Theme_DeviceDefault_NoActionBar
+                                )
+
+                                val wrapper = android.widget.FrameLayout(themedContext)
+
+                                val container = androidx.fragment.app.FragmentContainerView(themedContext).apply {
+                                    id = containerId
+                                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
                                 }
-                                try {
-                                    if (fragment.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                                        fragment.isTextSearchActive = uiState.isSearchActive
+                                wrapper.addView(container)
+
+                                val fragmentManager = activity.supportFragmentManager
+                                var pdfFragment = fragmentManager.findFragmentById(containerId) as? PdfViewerFragment
+                                if (pdfFragment == null) {
+                                    pdfFragment = PdfViewerFragment()
+                                    fragmentManager.beginTransaction()
+                                        .replace(containerId, pdfFragment)
+                                        .commitAllowingStateLoss()
+                                }
+
+                                wrapper.post { pdfFragment.documentUri = pdfUri }
+                                wrapper
+                            },
+                            update = { view ->
+                                val fragmentManager = activity.supportFragmentManager
+                                val fragment = fragmentManager.findFragmentById(containerId) as? PdfViewerFragment
+
+                                if (fragment != null) {
+                                    if (fragment.documentUri != pdfUri) {
+                                        fragment.documentUri = pdfUri
                                     }
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
+                                }
+
+                                if (uiState.isNightMode) {
+                                    val paint = android.graphics.Paint().apply {
+                                        // ELITE FIX 2: Using values to pass FloatArray correctly
+                                        colorFilter = android.graphics.ColorMatrixColorFilter(darkColorMatrix.values)
+                                    }
+                                    view.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, paint)
+                                } else {
+                                    view.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                                }
+                            },
+                            onRelease = { _ ->
+                                val fragmentManager = activity.supportFragmentManager
+                                val fragment = fragmentManager.findFragmentById(containerId)
+                                if (fragment != null) {
+                                    fragmentManager.beginTransaction()
+                                        .remove(fragment)
+                                        .commitAllowingStateLoss()
                                 }
                             }
                         )
-                    } else {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Failed to load PDF", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
                     }
-                }
-            } // Column End
-
-            // ==========================================
-            // LAYER 2: THE FLOATING AI BUTTON (Naya Jadoo)
-            // ==========================================
-            AnimatedVisibility(
-                visible = !showAiChat && !ocrState.isLiveTextActive, // Jab chat ya OCR khula ho to button chhupa do
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .navigationBarsPadding() // Screen ke niche bar se thoda upar rakhega
-            ) {
-                FloatingActionButton(
-                    onClick = {
-                        captureScreenNonBlocking(activity) { bitmap ->
-                            currentCapturedBitmap = bitmap
-                            showAiChat = true
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = "Ask AI")
                 }
             }
 
@@ -9502,16 +9630,16 @@ data class PdfViewerUiState(
     val pdfUri: Uri? = null,
     val isTopBarVisible: Boolean = true,
     val isNightMode: Boolean = false,
-    val isSearchActive: Boolean = false,
-    val currentPageNumber: Int = 1,      // 🌟 NAYA
-    val pdfFileName: String = ""          // 🌟 NAYA
+    // 🌟 ELITE FIX: isSearchActive ko delete kar diya gaya hai. (Single Source of Truth Native ke paas hai)
+    val currentPageNumber: Int = 1,
+    val pdfFileName: String = ""
 )
 
 sealed interface PdfViewerAction {
     data class SetTopBarVisible(val visible: Boolean) : PdfViewerAction
     data object ToggleTopBar : PdfViewerAction
     data object ToggleNightMode : PdfViewerAction
-    data object ToggleSearch : PdfViewerAction
+    // 🌟 ELITE FIX: ToggleSearch action delete kar diya!
 }
 
 @HiltViewModel
@@ -9537,7 +9665,7 @@ class PdfViewerViewModel @Inject constructor(
             is PdfViewerAction.SetTopBarVisible -> _uiState.update { it.copy(isTopBarVisible = action.visible) }
             is PdfViewerAction.ToggleTopBar -> _uiState.update { it.copy(isTopBarVisible = !it.isTopBarVisible) }
             is PdfViewerAction.ToggleNightMode -> _uiState.update { it.copy(isNightMode = !it.isNightMode) }
-            is PdfViewerAction.ToggleSearch -> _uiState.update { it.copy(isSearchActive = !it.isSearchActive) }
+            // ToggleSearch branch automatically hat gayi
         }
     }
 }
@@ -9546,9 +9674,12 @@ class PdfViewerViewModel @Inject constructor(
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ai
 
+// Deprecated warning fixed
+// Naya alpha import
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOutSine
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -9583,8 +9714,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -9606,16 +9739,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.unit.sp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.edu.pdf.domain.model.ChatMessage
 import com.edu.pdf.domain.model.ChatRole
@@ -9676,7 +9812,6 @@ fun AiChatOverlayScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                // ❌ Purane statusBarsPadding, navigationBarsPadding aur imePadding ko hata kar ye 1 line likho:
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
 
@@ -9740,11 +9875,13 @@ fun AiChatOverlayScreen(
                 onStopClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.onAction(AiChatAction.StopStreaming)
-                }
+                },
+                modifier = Modifier
             )
         }
     }
 }
+
 
 // ════════════════════════════════════════════════════════════
 // TOP BAR
@@ -9766,7 +9903,7 @@ private fun AiChatTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                    .padding(horizontal = 4.dp, vertical = 2.dp), // Vertical space reduced from 6 to 2 (Slim Look!)
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onDismiss) {
@@ -9777,10 +9914,7 @@ private fun AiChatTopBar(
                     )
                 }
 
-                // 🌟 Pulsing AI icon
-                AiIconPulse(modifier = Modifier.size(34.dp))
-
-                Spacer(modifier = Modifier.width(10.dp))
+                // 🌟 ELITE FIX: Yahan se AiIconPulse aur Spacer hata diya gaya hai!
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -9817,49 +9951,6 @@ private fun AiChatTopBar(
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// PULSING AI ICON
-// ════════════════════════════════════════════════════════════
-
-@Composable
-private fun AiIconPulse(modifier: Modifier = Modifier) {
-    val infiniteTransition = rememberInfiniteTransition(label = "ai_pulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.15f,
-        targetValue = 0.40f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = EaseInOutSine),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glow_alpha"
-    )
-
-    Box(
-        modifier = modifier
-            .background(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = glowAlpha),
-                        Color.Transparent
-                    )
-                ),
-                shape = CircleShape
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.AutoAwesome,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp)
-        )
-    }
-}
-
-// ════════════════════════════════════════════════════════════
-// MESSAGE LIST
-// ════════════════════════════════════════════════════════════
-
 @Composable
 private fun AiMessageList(
     messages: List<ChatMessage>,
@@ -9870,31 +9961,20 @@ private fun AiMessageList(
     LazyColumn(
         state = listState,
         modifier = modifier,
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 16.dp,
-            bottom = 24.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        // 🌟 ELITE FIX: Side padding hata di taaki full screen feel aaye
+        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp) // Messages ke beech zyada saaf jagah
     ) {
         items(messages, key = { it.id }) { message ->
             AnimatedVisibility(
                 visible = true,
-                enter = fadeIn(tween(200)) + slideInVertically(
-                    initialOffsetY = { it / 4 },
-                    animationSpec = tween(200)
-                )
+                enter = fadeIn(tween(200)) + slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(200))
             ) {
                 AiMessageBubble(message = message)
             }
         }
-
-        // 🌟 Typing indicator — sirf tab show karo jab last message stream nahi kar raha
         if (isThinking && messages.lastOrNull()?.isStreaming == false) {
-            item(key = "typing_indicator") {
-                TypingIndicator()
-            }
+            item(key = "typing_indicator") { TypingIndicator() }
         }
     }
 }
@@ -9907,87 +9987,66 @@ private fun AiMessageList(
 private fun AiMessageBubble(message: ChatMessage) {
     val isUser = message.role == ChatRole.USER
 
+    // 🌟 Ek taraf se start hoga dono (Gemini Jaisa)
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp), // Sirf sides me thodi jagah
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.Top
     ) {
-
-        // AI Avatar
-        if (!isUser) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(
-                        MaterialTheme.colorScheme.primaryContainer,
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(14.dp)
-                )
+        // Avatar
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .background(
+                    if (isUser) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isUser) {
+                Text("U", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            } else {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(16.dp))
             }
-            Spacer(modifier = Modifier.width(8.dp))
         }
 
-        // Bubble
-        Column(
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.82f else 0.88f),
-            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 18.dp,
-                            topEnd = 18.dp,
-                            bottomStart = if (isUser) 18.dp else 4.dp,
-                            bottomEnd = if (isUser) 4.dp else 18.dp
-                        )
-                    )
-                    .background(
-                        if (isUser) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                // 🌟 Streaming cursor blink effect
+        Spacer(modifier = Modifier.width(16.dp))
+
+        // Content Area (Bina kisi background dabbe ke)
+        Column(modifier = Modifier.weight(1f)) {
+            // Name Label (Jaise Gemini me hota hai)
+            Text(
+                text = if (isUser) "You" else "Read AI",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
+
+            if (!isUser && message.isStreaming && message.text.isEmpty()) {
+                // Breathing Pulse Animation
+                val infiniteTransition = rememberInfiniteTransition(label = "gemini_pulse")
+                val pulseAlpha by infiniteTransition.animateFloat(0.4f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), "pulse_alpha")
+
+                Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(3) { index ->
+                        val dotAlpha by infiniteTransition.animateFloat(0.2f, 1f, infiniteRepeatable(tween(400, delayMillis = index * 150), RepeatMode.Reverse), "dot_$index")
+                        Box(modifier = Modifier.size(8.dp).alpha(pulseAlpha * dotAlpha).background(Brush.linearGradient(listOf(Color(0xFF81D4FA), Color(0xFFCE93D8))), CircleShape))
+                    }
+                }
+            } else {
+                // Simple, flat, beautiful text
                 val displayText = when {
                     message.isStreaming && message.text.isNotEmpty() -> message.text + "▋"
-                    message.isStreaming && message.text.isEmpty() -> "▋"
                     else -> message.text
                 }
-
                 Text(
                     text = displayText,
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
-        }
-
-        // User Avatar
-        if (isUser) {
-            Spacer(modifier = Modifier.width(8.dp))
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "U",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.bodyLarge,
+                    lineHeight = 26.sp // Reading experience better karne ke liye
                 )
             }
         }
@@ -10001,77 +10060,29 @@ private fun AiMessageBubble(message: ChatMessage) {
 @Composable
 private fun TypingIndicator() {
     val infiniteTransition = rememberInfiniteTransition(label = "typing_dots")
-
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        // AI Avatar
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.AutoAwesome,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(14.dp)
-            )
+        Box(modifier = Modifier.size(32.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(16.dp))
         }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        // Dots Bubble
-        Box(
-            modifier = Modifier
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = 4.dp,
-                        bottomEnd = 18.dp
-                    )
-                )
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(horizontal = 18.dp, vertical = 14.dp)
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Read AI", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 4.dp)) {
                 repeat(3) { dotIndex ->
-                    val dotAlpha by infiniteTransition.animateFloat(
-                        initialValue = 0.25f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(
-                                durationMillis = 500,
-                                delayMillis = dotIndex * 160
-                            ),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "dot_alpha_$dotIndex"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                    alpha = dotAlpha
-                                ),
-                                shape = CircleShape
-                            )
-                    )
+                    val dotAlpha by infiniteTransition.animateFloat(0.25f, 1f, infiniteRepeatable(tween(500, delayMillis = dotIndex * 160), RepeatMode.Reverse), "dot_alpha")
+                    Box(modifier = Modifier.size(7.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = dotAlpha), CircleShape))
                 }
             }
         }
     }
 }
-
 // ════════════════════════════════════════════════════════════
 // EMPTY STATE
 // ════════════════════════════════════════════════════════════
-
 @Composable
 private fun AiEmptyState(
     prompts: List<String>,
@@ -10079,17 +10090,41 @@ private fun AiEmptyState(
     onPromptClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 🌟 ELITE FIX: Magic Breathing & Floating Animation
+    val infiniteTransition = rememberInfiniteTransition(label = "magic_logo_anim")
+
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = LinearOutSlowInEasing), RepeatMode.Reverse),
+        label = "logo_scale"
+    )
+
+    val floatOffset by infiniteTransition.animateFloat(
+        initialValue = 0f, targetValue = -8f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "logo_float"
+    )
+
     Column(
         modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            // 🌟 Wapas Classic Padding (Thodi space keyboard ke liye)
             .padding(horizontal = 24.dp)
-            .padding(top = 48.dp, bottom = 140.dp), // bottom space for input bar
+            .padding(top = 24.dp, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
+        // 🌟 Wapas Center Alignment
+        verticalArrangement = Arrangement.Center
     ) {
 
-        // Hero Icon
+        // 🌟 Purana Classic Logo (Bina Border) + Naya Breathing Animation
         Box(
             modifier = Modifier
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = floatOffset
+                }
                 .size(84.dp)
                 .background(
                     brush = Brush.radialGradient(
@@ -10210,8 +10245,8 @@ private fun AiInputSection(
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.background,
-        shadowElevation = 12.dp,
-        tonalElevation = 2.dp
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
@@ -10608,7 +10643,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10640,6 +10676,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -10713,51 +10750,46 @@ fun OcrSelectionOverlay(
                             }
                         )
                     }
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                dragStart = offset
-                                dragCurrent = offset
-                                selectedIndices = emptySet()
-                            },
-                            onDrag = { change, _ ->
-                                dragCurrent = change.position
-                                val start = dragStart ?: return@detectDragGestures
-                                val current = dragCurrent ?: return@detectDragGestures
+                    // 🌟 ELITE FIX: Using Smart Stylus Modifier for Palm Rejection
+                    .smartStylusSelection(
+                        onSelectionStart = { offset ->
+                            dragStart = offset
+                            dragCurrent = offset
+                            selectedIndices = emptySet()
+                        },
+                        onSelectionDrag = { currentPosition ->
+                            dragCurrent = currentPosition
+                            val start = dragStart ?: return@smartStylusSelection
+                            val current = dragCurrent ?: return@smartStylusSelection
 
-                                val dragRect = Rect(
-                                    left = min(start.x, current.x),
-                                    top = min(start.y, current.y),
-                                    right = max(start.x, current.x),
-                                    bottom = max(start.y, current.y)
-                                )
+                            val dragRect = Rect(
+                                left = min(start.x, current.x),
+                                top = min(start.y, current.y),
+                                right = max(start.x, current.x),
+                                bottom = max(start.y, current.y)
+                            )
 
-                                val newSelected = mutableSetOf<Int>()
-                                state.extractedTextBlocks.forEachIndexed { index, block ->
-                                    block.boundingBox?.let { rect ->
-                                        val blockRect = Rect(
-                                            left = rect.left.toFloat(),
-                                            top = rect.top.toFloat(),
-                                            right = rect.right.toFloat(),
-                                            bottom = rect.bottom.toFloat()
-                                        )
-                                        if (dragRect.overlaps(blockRect)) {
-                                            newSelected.add(index)
-                                        }
+                            val newSelected = mutableSetOf<Int>()
+                            state.extractedTextBlocks.forEachIndexed { index, block ->
+                                block.boundingBox?.let { rect ->
+                                    val blockRect = Rect(
+                                        left = rect.left.toFloat(),
+                                        top = rect.top.toFloat(),
+                                        right = rect.right.toFloat(),
+                                        bottom = rect.bottom.toFloat()
+                                    )
+                                    if (dragRect.overlaps(blockRect)) {
+                                        newSelected.add(index)
                                     }
                                 }
-                                selectedIndices = newSelected
-                            },
-                            onDragEnd = {
-                                dragStart = null
-                                dragCurrent = null
-                            },
-                            onDragCancel = {
-                                dragStart = null
-                                dragCurrent = null
                             }
-                        )
-                    }
+                            selectedIndices = newSelected
+                        },
+                        onSelectionEnd = {
+                            dragStart = null
+                            dragCurrent = null
+                        }
+                    )
             ) {
                 // Drawing Text Boxes
                 state.extractedTextBlocks.forEachIndexed { index, block ->
@@ -10860,6 +10892,34 @@ fun OcrSelectionOverlay(
                     .background(Color.White.copy(alpha = 0.8f), shape = MaterialTheme.shapes.small)
             ) {
                 Icon(Icons.Default.Close, contentDescription = "Close Scanner", tint = Color.Black)
+            }
+        }
+    }
+}
+fun Modifier.smartStylusSelection(
+    onSelectionStart: (Offset) -> Unit,
+    onSelectionDrag: (Offset) -> Unit,
+    onSelectionEnd: () -> Unit
+): Modifier = this.pointerInput(Unit) {
+    awaitEachGesture {
+        val downEvent = awaitFirstDown(requireUnconsumed = false)
+
+        // 🌟 PALM REJECTION: Sirf Pen (Stylus) ya Finger Touch (Single Touch) allow hoga
+        if (downEvent.type == PointerType.Stylus || downEvent.type == PointerType.Touch) {
+            onSelectionStart(downEvent.position)
+
+            var isDragging = true
+            while (isDragging) {
+                val event = awaitPointerEvent()
+                val dragChange = event.changes.firstOrNull { it.id == downEvent.id && it.pressed }
+
+                if (dragChange != null) {
+                    onSelectionDrag(dragChange.position)
+                    dragChange.consume() // Consume zaroori hai taaki peeche ka PDF scroll na ho
+                } else {
+                    isDragging = false
+                    onSelectionEnd()
+                }
             }
         }
     }
@@ -11970,31 +12030,6 @@ class SettingsViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\receiver\FileDetectionReceiver.kt
-``kotlin
-package com.edu.pdf.receiver
-
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.util.Log
-import com.edu.pdf.worker.PdfDetectionWorker
-
-class FileDetectionReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context?, intent: Intent?) {
-        val action = intent?.action
-        Log.d("FileDetectionReceiver", "Received action: $action")
-        
-        if (action == Intent.ACTION_MEDIA_SCANNER_SCAN_FILE || 
-            action == Intent.ACTION_MEDIA_SCANNER_FINISHED) {
-            context?.let {
-                Log.d("FileDetectionReceiver", "Triggering PDF Scan from Receiver")
-                PdfDetectionWorker.enqueueNow(it)
-            }
-        }
-    }
-}
-``n
 ### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\ui\theme\Color.kt
 ``kotlin
 package com.edu.pdf.ui.theme
@@ -12142,14 +12177,18 @@ package com.edu.pdf.worker
 import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
-import androidx.work.*
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import com.edu.pdf.domain.model.SortType
 import com.edu.pdf.domain.repository.PdfRepository
 import com.edu.pdf.notification.PdfNotificationHelper
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import com.edu.pdf.domain.model.SortType
 import kotlinx.coroutines.flow.first
-import java.util.concurrent.TimeUnit
 
 @HiltWorker
 class PdfDetectionWorker @AssistedInject constructor(
@@ -12165,22 +12204,19 @@ class PdfDetectionWorker @AssistedInject constructor(
             // 1. Scan the device for new PDFs
             repository.scanAndSavePdfs()
 
-            // 2. Find very recent PDFs (Ordered by Date Modified)
-            // 🌟 CRITICAL FIX: 'getRecentPdfs' sirf opened files dikhata hai.
-            // Hum 'getAllPdfs' use karenge taaki nayi aayi files (Jo khuli nahi hain) wo bhi milein.
+
             val latestPdfs = repository.getAllPdfs(SortType.DATE_DESC).first().take(10)
             val nowSeconds = System.currentTimeMillis() / 1000
             
             Log.d("PdfDetectionWorker", "Scanning top 10 newest PDFs in system")
 
             latestPdfs.forEach { pdf ->
-                // 🌟 RELAXED CHECK: 5 minute window (300 seconds)
                 val ageSeconds = nowSeconds - pdf.lastModified
                 Log.d("PdfDetectionWorker", "Analyzing: ${pdf.name}, Age: ${ageSeconds}s")
-                
-                if (ageSeconds >= 0 && ageSeconds < 300) { 
-                     Log.d("PdfDetectionWorker", "NOTIFYING: ${pdf.name}")
-                     notificationHelper.showNewPdfNotification(pdf.name, pdf.path)
+
+                if (ageSeconds in 0..<60) {
+                    Log.d("PdfDetectionWorker", "NOTIFYING: ${pdf.name}")
+                    notificationHelper.showNewPdfNotification(pdf.name, pdf.path)
                 }
             }
 
@@ -12208,16 +12244,6 @@ class PdfDetectionWorker @AssistedInject constructor(
             )
         }
 
-        fun enqueueNow(context: Context) {
-            val request = OneTimeWorkRequestBuilder<PdfDetectionWorker>()
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "PdfDetectionWorkNow", // Different ID to avoid collision
-                ExistingWorkPolicy.REPLACE,
-                request
-            )
-        }
     }
 }
 ``n
