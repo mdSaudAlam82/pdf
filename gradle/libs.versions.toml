@@ -41,6 +41,8 @@ mlkit-devanagari-gms = "16.0.1"
 generativeAi = "0.9.0"
 mlkitGenAi = "1.0.0-beta2"
 securityCrypto = "1.1.0"
+mockk = "1.13.10"
+coroutinesTest = "1.8.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -103,7 +105,8 @@ mlkit-text-recognition-devanagari-gms = { group = "com.google.android.gms", name
 google-ai-client = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeAi" }
 google-mlkit-genai = { group = "com.google.mlkit", name = "genai-prompt", version.ref = "mlkitGenAi" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
-
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

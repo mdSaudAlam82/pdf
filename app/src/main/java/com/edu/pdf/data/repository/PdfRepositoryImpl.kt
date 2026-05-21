@@ -107,7 +107,11 @@ class PdfRepositoryImpl @Inject constructor(
         val target = targetPath ?: deviceStorage.getPdfProRootFolder()
 
         // 🌟 ELITE FIX 2: INCEPTION LOOP GUARD (BULLETPROOF)
-        if (target == folderPath || target.startsWith("$folderPath/")) {
+        // Check if we are moving folder into itself or its children
+        val normalizedSource = File(folderPath).absolutePath
+        val normalizedTarget = File(target).absolutePath
+        
+        if (normalizedTarget == normalizedSource || normalizedTarget.startsWith("$normalizedSource/")) {
             return@withContext Result.failure(Exception("Cannot move a folder into itself or its own sub-folder!"))
         }
 
@@ -133,6 +137,9 @@ class PdfRepositoryImpl @Inject constructor(
 
             // 3. Move होने के बाद उसे Recent से हटाओ
             pdfDao.updateFolderLastOpenedTime(newPhysicalPath, 0L)
+
+            // 🌟 SMART REFRESH: MediaStore ko turant batao taaki UI update ho jaye
+            deviceStorage.syncWithMediaStore(folderPath, newPhysicalPath)
 
             Result.success(Unit)
         } else {
@@ -170,8 +177,11 @@ class PdfRepositoryImpl @Inject constructor(
                     val newPhysicalPath = deviceStorage.movePhysicalFile(pdfToMove.path, targetPhysicalDir)
                     if (newPhysicalPath != null) {
                         pdfDao.updatePdfNameAndPath(pdfId, pdfToMove.name, newPhysicalPath)
-                        // 🌟 FIX: targetPhysicalDir ki jagah 'targetPath' use karein taaki Root folder ke liye null save ho!
                         pdfDao.movePdfToFolder(pdfId, targetPath, isVault)
+                        
+                        // 🌟 SMART REFRESH: MediaStore sync for each file
+                        deviceStorage.syncWithMediaStore(pdfToMove.path, newPhysicalPath)
+
                         movedCount++
                     }
                 }

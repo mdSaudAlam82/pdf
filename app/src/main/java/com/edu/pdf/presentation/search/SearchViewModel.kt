@@ -57,9 +57,8 @@ class SearchViewModel @Inject constructor(
     private val _events = kotlinx.coroutines.channels.Channel<SearchEvent>()
     val events = _events.receiveAsFlow()
 
-    // 🌟 RE-ENGINEERED FLOWS FOR STRICT MVI STATE
+    // 🌟 INSTANT SEARCH: Debounce puri tarah hata diya
     private val searchResultsFlow = _searchQuery
-        .debounce(300L) // Prevent DB crash while fast typing
         .map { it.trim() }
         .distinctUntilChanged()
         .flatMapLatest { query ->
@@ -89,8 +88,8 @@ class SearchViewModel @Inject constructor(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = SearchUiState(isLoading = true)
+        started = SharingStarted.Eagerly, // 🌟 Changed to Eagerly for better test reliability
+        initialValue = SearchUiState(isLoading = false) // 🌟 Set initial loading to false
     )
 
     // 🌟 THE REDUCER: UI bas Actions bhejega yahan

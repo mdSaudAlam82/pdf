@@ -32,22 +32,22 @@ class PdfThumbnailFetcher(
     private val options: Options
 ) : Fetcher {
 
+    // ✅ NAYA CODE YAHAN PASTE KAREIN
     override suspend fun fetch(): FetchResult? = withContext(renderDispatcher) {
         if (pdf.isVault) return@withContext null
 
         val file = File(pdf.path)
         if (!file.exists() || file.length() == 0L) return@withContext null
 
-        val cacheFolder = File(context.cacheDir, "smart_pdf_thumbnails")
+        val cacheFolder = File(context.cacheDir, "pdf_thumbnails")
         if (!cacheFolder.exists()) cacheFolder.mkdirs()
 
-        // 🌟 THE ELITE FIX: ID aur LastModified dono use karo, taaki PDF edit hone par Thumbnail turant update ho jaye!
-        val uniqueId = java.util.UUID.nameUUIDFromBytes((pdf.id + pdf.lastModified).toByteArray()).toString()
-        val thumbFileName = "$uniqueId.webp"
-        val cachedThumbFile = File(cacheFolder, thumbFileName)
+        // 🌟 ELITE 2026 FIX: 'lastModified' add kar diya taaki edit ki hui PDF ka naya thumbnail bane
+        val pathHash = pdf.path.hashCode().toString()
+        val cacheKey = "${pathHash}_${file.lastModified()}.webp"
+        val cachedThumbFile = File(cacheFolder, cacheKey)
 
-
-        if (cachedThumbFile.exists() && cachedThumbFile.length() > 500) {
+        if (cachedThumbFile.exists()) {
             return@withContext SourceFetchResult(
                 source = ImageSource(
                     file = cachedThumbFile.toOkioPath(),
@@ -57,6 +57,8 @@ class PdfThumbnailFetcher(
                 dataSource = DataSource.DISK
             )
         }
+
+        // (Aapka bacha hua 'try {' wala code yahin se aage badhega, usme koi change nahi hai)
         ensureActive()
 
 

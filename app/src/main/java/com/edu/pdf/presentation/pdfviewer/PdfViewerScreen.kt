@@ -1,5 +1,6 @@
 package com.edu.pdf.presentation.pdfviewer
 
+// 🌟 IMPORTS ME DHYAN DEIN: Humne naye function ka naam AiChatOverlayScreen rakha tha
 import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Handler
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.CenterFocusWeak
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,10 +61,9 @@ import androidx.fragment.compose.AndroidFragment
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
+import com.edu.pdf.presentation.pdfviewer.ai.AiChatOverlayScreen
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrAction
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrSelectionOverlay
-// 🌟 IMPORTS ME DHYAN DEIN: Humne naye function ka naam AiChatOverlayScreen rakha tha
-import com.edu.pdf.presentation.pdfviewer.ai.AiChatOverlayScreen
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -185,6 +183,22 @@ fun PdfViewerScreen(
                             Icon(Icons.Default.CenterFocusWeak, contentDescription = "Scan Text", tint = MaterialTheme.colorScheme.onSurface)
                         }
 
+                        // 🌟 ELITE 2026 FIX: AI Button moved to Top Bar
+                        IconButton(
+                            onClick = {
+                                captureScreenNonBlocking(activity) { bitmap ->
+                                    currentCapturedBitmap = bitmap
+                                    showAiChat = true
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Ask AI",
+                                tint = MaterialTheme.colorScheme.primary // Premium Brand Red/Blue Color
+                            )
+                        }
+
                         IconButton(onClick = { viewModel.onAction(PdfViewerAction.ToggleSearch) }) {
                             Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurface)
                         }
@@ -254,30 +268,6 @@ fun PdfViewerScreen(
                             Text("Failed to load PDF", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                }
-            } // Column End
-
-            // ==========================================
-            // LAYER 2: THE FLOATING AI BUTTON (Naya Jadoo)
-            // ==========================================
-            AnimatedVisibility(
-                visible = !showAiChat && !ocrState.isLiveTextActive, // Jab chat ya OCR khula ho to button chhupa do
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .navigationBarsPadding() // Screen ke niche bar se thoda upar rakhega
-            ) {
-                FloatingActionButton(
-                    onClick = {
-                        captureScreenNonBlocking(activity) { bitmap ->
-                            currentCapturedBitmap = bitmap
-                            showAiChat = true
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = "Ask AI")
                 }
             }
 

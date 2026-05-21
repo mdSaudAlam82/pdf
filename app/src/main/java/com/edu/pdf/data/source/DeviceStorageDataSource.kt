@@ -53,6 +53,11 @@ class DeviceStorageDataSource @Inject constructor(
         val targetDir = File(targetFolderPath)
         if (!targetDir.exists()) targetDir.mkdirs()
 
+        // 🌟 SMART POLISH: Agar source aur target same hain, toh kuch mat karo!
+        if (sourceFile.parentFile?.absolutePath == targetDir.absolutePath) {
+            return@withContext sourcePath
+        }
+
         var targetFile = File(targetDir, sourceFile.name)
 
         val originalNameWithoutExt = sourceFile.nameWithoutExtension

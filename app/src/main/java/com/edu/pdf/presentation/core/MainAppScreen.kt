@@ -23,15 +23,18 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -59,13 +62,29 @@ fun hasStoragePermission(): Boolean {
     return Environment.isExternalStorageManager()
 }
 
+
+
 @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
-fun MainAppScreen() {
+fun MainAppScreen(
+    externalPdfUri: String? = null,
+    onPdfOpened: () -> Unit = {}
+) {
     val navController = rememberNavController()
-    LocalContext.current
 
-    val windowSizeClass = calculateWindowSizeClass(activity = androidx.activity.compose.LocalActivity.current ?: return)
+    // Track external PDF launches for proper back navigation
+    var isExternalLaunch by remember { mutableStateOf(false) }
+
+    LaunchedEffect(externalPdfUri) {
+        if (!externalPdfUri.isNullOrBlank()) {
+            isExternalLaunch = true
+            navController.navigate(Screen.PdfViewer(pdfPath = externalPdfUri))
+            onPdfOpened()
+        }
+    }
+
+    val activity = androidx.activity.compose.LocalActivity.current ?: return
+    val windowSizeClass = calculateWindowSizeClass(activity = activity)
     val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     val startScreen: Screen = remember {
@@ -73,11 +92,12 @@ fun MainAppScreen() {
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
-    val isFullScreen = currentRoute?.contains(Screen.PdfViewer::class.simpleName ?: "") == true ||
-            currentRoute?.contains(Screen.Vault::class.simpleName ?: "") == true ||
-            currentRoute?.contains(Screen.Permission::class.simpleName ?: "") == true ||
-            currentRoute?.contains(Screen.Search::class.simpleName ?: "") == true
+    val destination = navBackStackEntry?.destination
+
+    val isFullScreen = destination?.hasRoute<Screen.PdfViewer>() == true ||
+            destination?.hasRoute<Screen.Vault>() == true ||
+            destination?.hasRoute<Screen.Permission>() == true ||
+            destination?.hasRoute<Screen.Search>() == true
 
     Row(modifier = Modifier.fillMaxSize()) {
         if (isTablet && !isFullScreen) {
@@ -106,7 +126,11 @@ fun MainAppScreen() {
                 // 🌟 FIX: Sabko properly navController aur isTablet pass kar diya hai
                 homeSection(navController = navController, isTablet = isTablet)
                 searchSection(navController = navController)
-                pdfViewerSection(navController = navController)
+                pdfViewerSection(
+                    navController = navController,
+                    isExternalLaunch = { isExternalLaunch }, // 🌟 ELITE FIX: Curly braces laga diye (Lambda bana diya)
+                    onExternalClosed = { isExternalLaunch = false }
+                )
                 foldersSection(navController = navController, isTablet = isTablet)
                 placeholderSections(navController = navController, isTablet = isTablet)
             }
@@ -205,8 +229,28 @@ fun NavGraphBuilder.searchSection(navController: NavHostController) {
     composable<Screen.Search> { SearchScreen(onBackClick = { navController.popBackStack() }, onPdfClick = { path -> navController.navigate(Screen.PdfViewer(pdfPath = path)) }) }
 }
 
-fun NavGraphBuilder.pdfViewerSection(navController: NavHostController) {
-    composable<Screen.PdfViewer> { backStackEntry -> backStackEntry.toRoute<Screen.PdfViewer>(); PdfViewerScreen(onBack = { navController.popBackStack() }) }
+fun NavGraphBuilder.pdfViewerSection(
+    navController: NavHostController,
+    isExternalLaunch: () -> Boolean = { false },
+    onExternalClosed: () -> Unit = {}
+) {
+    composable<Screen.PdfViewer> { backStackEntry ->
+        backStackEntry.toRoute<Screen.PdfViewer>()
+
+        val activity = androidx.activity.compose.LocalActivity.current
+
+        PdfViewerScreen(onBack = {
+            if (isExternalLaunch()) {
+                // 🌟 ELITE FIX: Pehle state clear karo aur activity ko finish kar do!
+                // Isse app WhatsApp ke task stack se poori tarah mita diya jayega.
+                onExternalClosed()
+                activity?.finish()
+            } else {
+                // Agar app ke andar se khola hai, toh normal back stack pop karo
+                navController.popBackStack()
+            }
+        })
+    }
 }
 
 fun NavGraphBuilder.foldersSection(navController: NavHostController, isTablet: Boolean) {

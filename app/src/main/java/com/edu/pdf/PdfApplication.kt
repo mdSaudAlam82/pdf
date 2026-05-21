@@ -1,6 +1,8 @@
 package com.edu.pdf
 
 import android.app.Application
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
@@ -11,9 +13,17 @@ import coil3.util.DebugLogger
 import com.edu.pdf.data.coil.PdfThumbnailFetcher
 import com.edu.pdf.domain.model.PdfFile
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
 @HiltAndroidApp
-class PdfApplication : Application(), SingletonImageLoader.Factory {
+class PdfApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
+    
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
     override fun newImageLoader(context: android.content.Context): ImageLoader {
         return ImageLoader.Builder(context)
             .components {

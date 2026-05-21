@@ -4,7 +4,7 @@
 ``
 Folder PATH listing
 Volume serial number is DC19-0CB1
-C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
+C:\USERS\SAUD\ANDROIDSTUDIOPROJECTS\PDF\APP\SRC\MAIN
 |   AndroidManifest.xml
 |   
 +---java
@@ -78,6 +78,9 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |           RenamePdfUseCase.kt
 |               |           ScanPdfsUseCase.kt
 |               |           
+|               +---notification
+|               |       PdfNotificationHelper.kt
+|               |       
 |               +---presentation
 |               |   +---common
 |               |   |   |   PremiumBottomBar.kt
@@ -147,13 +150,11 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |   |   |       AiChatContract.kt
 |               |   |   |       AiChatViewModel.kt
 |               |   |   |       
-|               |   |   +---components
-|               |   |   +---ocr
-|               |   |   |       OcrContract.kt
-|               |   |   |       OcrSelectionOverlay.kt
-|               |   |   |       OcrViewModel.kt
-|               |   |   |       
-|               |   |   \---pdf
+|               |   |   \---ocr
+|               |   |           OcrContract.kt
+|               |   |           OcrSelectionOverlay.kt
+|               |   |           OcrViewModel.kt
+|               |   |           
 |               |   +---search
 |               |   |   |   SearchScreen.kt
 |               |   |   |   SearchViewModel.kt
@@ -165,12 +166,18 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
 |               |           SettingsScreen.kt
 |               |           SettingsViewModel.kt
 |               |           
-|               \---ui
-|                   \---theme
-|                           Color.kt
-|                           Theme.kt
-|                           Type.kt
-|                           
+|               +---receiver
+|               |       FileDetectionReceiver.kt
+|               |       
+|               +---ui
+|               |   \---theme
+|               |           Color.kt
+|               |           Theme.kt
+|               |           Type.kt
+|               |           
+|               \---worker
+|                       PdfDetectionWorker.kt
+|                       
 \---res
     +---drawable
     |       empty_state_illustration.png
@@ -217,12 +224,14 @@ C:\USERS\SAUD\PROJECT\PDF\APP\SRC\MAIN
             
 ``n
 ## 2. ANDROID MANIFEST
-FILE: C:\Users\saud\project\pdf\app\src\main\AndroidManifest.xml
+FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\AndroidManifest.xml
 ``xml
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="AllFilesAccessPolicy,ScopedStorage" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:name=".PdfApplication"
         android:allowBackup="false"
@@ -237,7 +246,7 @@ FILE: C:\Users\saud\project\pdf\app\src\main\AndroidManifest.xml
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+            android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.Material3.DayNight.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -253,42 +262,114 @@ FILE: C:\Users\saud\project\pdf\app\src\main\AndroidManifest.xml
             android:authorities="${applicationId}.androidx-startup"
             android:exported="false"
             tools:node="merge">
+            <!-- 🌟 HILT FIX: Disable default initializer to use Hilt's custom configuration -->
             <meta-data
                 android:name="androidx.work.WorkManagerInitializer"
                 android:value="androidx.startup"
                 tools:node="remove" />
         </provider>
+
+        <receiver android:name=".receiver.FileDetectionReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MEDIA_SCANNER_SCAN_FILE" />
+                <data android:scheme="file" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
 
 ``n
 ## 3. KOTLIN SOURCE CODE
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\MainActivity.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\MainActivity.kt
 ``kotlin
 package com.edu.pdf
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.database.ContentObserver
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import com.edu.pdf.data.security.SecurityUtils
+import com.edu.pdf.domain.usecase.ScanPdfsUseCase
+import com.edu.pdf.domain.model.SortType
 import com.edu.pdf.presentation.core.MainAppScreen
 import com.edu.pdf.ui.theme.PdfTheme
+import com.edu.pdf.worker.PdfDetectionWorker
+import com.edu.pdf.notification.PdfNotificationHelper
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
+
+    @Inject lateinit var scanPdfsUseCase: ScanPdfsUseCase
+    @Inject lateinit var notificationHelper: PdfNotificationHelper
+    @Inject lateinit var repository: com.edu.pdf.domain.repository.PdfRepository
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            PdfDetectionWorker.enqueue(this)
+        }
+    }
+
+    private val contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            super.onChange(selfChange)
+            lifecycleScope.launch(Dispatchers.IO) {
+                // 1. Scan the device
+                scanPdfsUseCase()
+                
+                // 🌟 INSTANT NOTIFICATION: Jab app khula ho, turant check karo
+                val latest = repository.getAllPdfs(SortType.DATE_DESC).first().firstOrNull()
+                latest?.let { pdf ->
+                    val ageSec = (System.currentTimeMillis() / 1000) - pdf.lastModified
+                    if (ageSec < 10) { // Sirf wahi jo abhi-abhi aayi hai (Instant)
+                        notificationHelper.showNewPdfNotification(pdf.name, pdf.path)
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         SecurityUtils.wipeVaultTempStorage(this)
         enableEdgeToEdge()
+
+        checkNotificationPermission()
+        PdfDetectionWorker.enqueue(this)
+
+        contentResolver.registerContentObserver(
+            MediaStore.Files.getContentUri("external"),
+            true,
+            contentObserver
+        )
+
+        // 🌟 DEEP LINK: Click handler will be in the Navigation system
+        // But we catch the path here
+        val pdfPathToOpen = intent.getStringExtra("pdf_to_open")
+
         setContent {
             PdfTheme {
                 Surface(
@@ -300,13 +381,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun checkNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        contentResolver.unregisterContentObserver(contentObserver)
+    }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\PdfApplication.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\PdfApplication.kt
 ``kotlin
 package com.edu.pdf
 
 import android.app.Application
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
@@ -317,9 +413,17 @@ import coil3.util.DebugLogger
 import com.edu.pdf.data.coil.PdfThumbnailFetcher
 import com.edu.pdf.domain.model.PdfFile
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
 @HiltAndroidApp
-class PdfApplication : Application(), SingletonImageLoader.Factory {
+class PdfApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
+    
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
     override fun newImageLoader(context: android.content.Context): ImageLoader {
         return ImageLoader.Builder(context)
             .components {
@@ -342,7 +446,7 @@ class PdfApplication : Application(), SingletonImageLoader.Factory {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\coil\PdfThumbnailFetcher.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\coil\PdfThumbnailFetcher.kt
 ``kotlin
 package com.edu.pdf.data.coil
 
@@ -483,7 +587,7 @@ class PdfThumbnailFetcher(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\PdfDatabase.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\PdfDatabase.kt
 ``kotlin
 package com.edu.pdf.data.local
 
@@ -511,7 +615,7 @@ abstract class PdfDatabase : RoomDatabase() {
     abstract val searchHistoryDao: SearchHistoryDao
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\dao\PdfDao.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\dao\PdfDao.kt
 ``kotlin
 package com.edu.pdf.data.local.dao
 
@@ -771,7 +875,7 @@ interface PdfDao {
 
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\dao\SearchHistoryDao.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\dao\SearchHistoryDao.kt
 ``kotlin
 package com.edu.pdf.data.local.dao
 
@@ -797,7 +901,7 @@ interface SearchHistoryDao {
     suspend fun deleteSearchQuery(query: String)
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\entity\FolderEntity.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\entity\FolderEntity.kt
 ``kotlin
 package com.edu.pdf.data.local.entity
 
@@ -827,7 +931,7 @@ data class FolderEntity(
     val lastOpenedTime: Long = 0L
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\entity\PdfEntity.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\entity\PdfEntity.kt
 ``kotlin
 package com.edu.pdf.data.local.entity
 
@@ -860,7 +964,7 @@ data class PdfEntity(
     val isVault: Boolean = false
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\entity\PdfFtsEntity.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\entity\PdfFtsEntity.kt
 ``kotlin
 package com.edu.pdf.data.local.entity
 
@@ -874,7 +978,7 @@ data class PdfFtsEntity(
     val name: String
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\local\entity\SearchHistoryEntity.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\local\entity\SearchHistoryEntity.kt
 ``kotlin
 package com.edu.pdf.data.local.entity
 
@@ -888,7 +992,7 @@ data class SearchHistoryEntity(
     val timestamp: Long
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\mapper\PdfMapper.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\mapper\PdfMapper.kt
 ``kotlin
 package com.edu.pdf.data.mapper
 
@@ -950,7 +1054,7 @@ fun FolderWithCount.toDomainModel(): Folder {
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\preferences\AiKeyManager.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\preferences\AiKeyManager.kt
 ``kotlin
 package com.edu.pdf.data.preferences
 
@@ -998,7 +1102,7 @@ class AiKeyManager @Inject constructor(
     fun hasAnyKey(): Boolean = getKeys().isNotEmpty()
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\preferences\UserPreferences.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\preferences\UserPreferences.kt
 ``kotlin
 package com.edu.pdf.data.preferences
 
@@ -1042,7 +1146,7 @@ class UserPreferences @Inject constructor(
     suspend fun setInitialScanCompleted(completed: Boolean) = dataStore.edit { it[IS_INITIAL_SCAN_COMPLETED] = completed }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\repository\AiRepositoryImpl.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\repository\AiRepositoryImpl.kt
 ``kotlin
 package com.edu.pdf.data.repository
 
@@ -1123,7 +1227,7 @@ class AiRepositoryImpl @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\repository\PdfRepositoryImpl.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\repository\PdfRepositoryImpl.kt
 ``kotlin
 package com.edu.pdf.data.repository
 
@@ -1234,7 +1338,11 @@ class PdfRepositoryImpl @Inject constructor(
         val target = targetPath ?: deviceStorage.getPdfProRootFolder()
 
         // 🌟 ELITE FIX 2: INCEPTION LOOP GUARD (BULLETPROOF)
-        if (target == folderPath || target.startsWith("$folderPath/")) {
+        // Check if we are moving folder into itself or its children
+        val normalizedSource = File(folderPath).absolutePath
+        val normalizedTarget = File(target).absolutePath
+        
+        if (normalizedTarget == normalizedSource || normalizedTarget.startsWith("$normalizedSource/")) {
             return@withContext Result.failure(Exception("Cannot move a folder into itself or its own sub-folder!"))
         }
 
@@ -1260,6 +1368,9 @@ class PdfRepositoryImpl @Inject constructor(
 
             // 3. Move होने के बाद उसे Recent से हटाओ
             pdfDao.updateFolderLastOpenedTime(newPhysicalPath, 0L)
+
+            // 🌟 SMART REFRESH: MediaStore ko turant batao taaki UI update ho jaye
+            deviceStorage.syncWithMediaStore(folderPath, newPhysicalPath)
 
             Result.success(Unit)
         } else {
@@ -1297,8 +1408,11 @@ class PdfRepositoryImpl @Inject constructor(
                     val newPhysicalPath = deviceStorage.movePhysicalFile(pdfToMove.path, targetPhysicalDir)
                     if (newPhysicalPath != null) {
                         pdfDao.updatePdfNameAndPath(pdfId, pdfToMove.name, newPhysicalPath)
-                        // 🌟 FIX: targetPhysicalDir ki jagah 'targetPath' use karein taaki Root folder ke liye null save ho!
                         pdfDao.movePdfToFolder(pdfId, targetPath, isVault)
+                        
+                        // 🌟 SMART REFRESH: MediaStore sync for each file
+                        deviceStorage.syncWithMediaStore(pdfToMove.path, newPhysicalPath)
+
                         movedCount++
                     }
                 }
@@ -1522,7 +1636,7 @@ class PdfRepositoryImpl @Inject constructor(
     override suspend fun getPhysicalFolderPdfIdsFast(folderPath: String) = pdfDao.getPhysicalFolderPdfIdsFast(folderPath)
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\security\SecurityUtils.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\security\SecurityUtils.kt
 ``kotlin
 package com.edu.pdf.data.security
 
@@ -1541,7 +1655,7 @@ object SecurityUtils {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\security\VaultCryptoEngine.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\security\VaultCryptoEngine.kt
 ``kotlin
 package com.edu.pdf.data.security
 
@@ -1592,7 +1706,7 @@ class VaultCryptoEngine @Inject constructor(
 
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\source\DeviceStorageDataSource.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\source\DeviceStorageDataSource.kt
 ``kotlin
 package com.edu.pdf.data.source
 
@@ -1648,6 +1762,11 @@ class DeviceStorageDataSource @Inject constructor(
 
         val targetDir = File(targetFolderPath)
         if (!targetDir.exists()) targetDir.mkdirs()
+
+        // 🌟 SMART POLISH: Agar source aur target same hain, toh kuch mat karo!
+        if (sourceFile.parentFile?.absolutePath == targetDir.absolutePath) {
+            return@withContext sourcePath
+        }
 
         var targetFile = File(targetDir, sourceFile.name)
 
@@ -1930,7 +2049,7 @@ class DeviceStorageDataSource @Inject constructor(
 
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\data\source\VaultDataSource.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\data\source\VaultDataSource.kt
 ``kotlin
 // FILE: VaultDataSource.kt
 package com.edu.pdf.data.source
@@ -2054,7 +2173,7 @@ class VaultDataSource @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\di\DatabaseModule.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\di\DatabaseModule.kt
 ``kotlin
 package com.edu.pdf.di
 
@@ -2106,7 +2225,7 @@ object DatabaseModule {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\di\RepositoryModule.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\di\RepositoryModule.kt
 ``kotlin
 package com.edu.pdf.di
 
@@ -2136,7 +2255,7 @@ abstract class RepositoryModule {
     ): com.edu.pdf.domain.repository.AiRepository
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\di\UseCaseModule.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\di\UseCaseModule.kt
 ``kotlin
 package com.edu.pdf.di
 
@@ -2186,7 +2305,7 @@ object UseCaseModule {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\model\ChatMessage.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\model\ChatMessage.kt
 ``kotlin
 package com.edu.pdf.domain.model
 
@@ -2202,7 +2321,7 @@ data class ChatMessage(
     val isStreaming: Boolean = false
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\model\Folder.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\model\Folder.kt
 ``kotlin
 package com.edu.pdf.domain.model
 
@@ -2219,7 +2338,7 @@ data class Folder(
     val lastOpenedTime: Long = 0L
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\model\FolderType.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\model\FolderType.kt
 ``kotlin
 package com.edu.pdf.domain.model
 
@@ -2239,7 +2358,7 @@ enum class FolderType {
     SECURE_VAULT     // Private Vault
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\model\HomeItem.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\model\HomeItem.kt
 ``kotlin
 package com.edu.pdf.domain.model
 
@@ -2266,7 +2385,7 @@ sealed interface HomeItem {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\model\PdfFile.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\model\PdfFile.kt
 ``kotlin
 package com.edu.pdf.domain.model
 
@@ -2287,7 +2406,7 @@ data class PdfFile(
     val isVault: Boolean = false         // 🌟 NAYA: Kya ye file locked hai?
 )
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\model\SortType.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\model\SortType.kt
 ``kotlin
 package com.edu.pdf.domain.model
 
@@ -2300,7 +2419,7 @@ enum class SortType {
     NAME_ASC, NAME_DESC, DATE_DESC, DATE_ASC, SIZE_DESC, SIZE_ASC
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\ocr\TextRecognitionEngine.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\ocr\TextRecognitionEngine.kt
 ``kotlin
 package com.edu.pdf.domain.ocr
 
@@ -2355,7 +2474,7 @@ class TextRecognitionEngine @Inject constructor() {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\repository\AiRepository.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\repository\AiRepository.kt
 ``kotlin
 package com.edu.pdf.domain.repository
 
@@ -2367,7 +2486,7 @@ interface AiRepository {
     fun chatWithPdfStream(query: String, pageBitmap: Bitmap?): Flow<String>
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\repository\PdfRepository.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\repository\PdfRepository.kt
 ``kotlin
 package com.edu.pdf.domain.repository
 
@@ -2429,7 +2548,7 @@ interface PdfRepository {
 
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\usecase\CreateFolderUseCase.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\usecase\CreateFolderUseCase.kt
 ``kotlin
 package com.edu.pdf.domain.usecase
 
@@ -2445,7 +2564,7 @@ class CreateFolderUseCase @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\usecase\DeleteFolderUseCase.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\usecase\DeleteFolderUseCase.kt
 ``kotlin
 package com.edu.pdf.domain.usecase
 
@@ -2460,7 +2579,7 @@ class DeleteFolderUseCase @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\usecase\DeletePdfsUseCase.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\usecase\DeletePdfsUseCase.kt
 ``kotlin
 package com.edu.pdf.domain.usecase
 
@@ -2472,11 +2591,14 @@ class DeletePdfsUseCase @Inject constructor(
     private val repository: PdfRepository
 ) {
     suspend operator fun invoke(pdfs: List<PdfFile>): Boolean {
+        // 🌟 SMART FIX: Agar list khali hai, toh repository ko call mat karo
+        if (pdfs.isEmpty()) return true
+
         return repository.deletePdfs(pdfs)
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\usecase\RenamePdfUseCase.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\usecase\RenamePdfUseCase.kt
 ``kotlin
 package com.edu.pdf.domain.usecase
 
@@ -2494,7 +2616,7 @@ class RenamePdfUseCase @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\domain\usecase\ScanPdfsUseCase.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\domain\usecase\ScanPdfsUseCase.kt
 ``kotlin
 package com.edu.pdf.domain.usecase
 
@@ -2507,7 +2629,75 @@ class ScanPdfsUseCase @Inject constructor(
     suspend operator fun invoke() = repository.scanAndSavePdfs()
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumBottomBar.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\notification\PdfNotificationHelper.kt
+``kotlin
+package com.edu.pdf.notification
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import com.edu.pdf.MainActivity
+import com.edu.pdf.R
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class PdfNotificationHelper @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    private val CHANNEL_ID = "pdf_file_updates" // 🌟 STANDARD CHANNEL
+
+    init {
+        createNotificationChannel()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "PDF File Updates", 
+                NotificationManager.IMPORTANCE_DEFAULT // 🌟 STANDARD IMPORTANCE
+            ).apply {
+                description = "Notifies when a PDF is added or changed"
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    fun showNewPdfNotification(fileName: String, filePath: String) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra("pdf_to_open", filePath)
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            filePath.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle("PDF Update")
+            .setContentText(fileName)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // 🌟 STANDARD PRIORITY
+            .setDefaults(NotificationCompat.DEFAULT_ALL) // 🌟 SYSTEM SOUND/VIBRATE
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(filePath.hashCode(), notification)
+    }
+}
+``n
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumBottomBar.kt
 ``kotlin
 package com.edu.pdf.presentation.common
 
@@ -2654,7 +2844,7 @@ fun PremiumNavigationRail(navController: NavHostController) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumBreadcrumbs.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumBreadcrumbs.kt
 ``kotlin
 package com.edu.pdf.presentation.common
 
@@ -2778,7 +2968,7 @@ private fun EliteBreadcrumbItem(name: String, isLast: Boolean, onClick: () -> Un
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumFolderComponents.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\PremiumFolderComponents.kt
 ``kotlin
 package com.edu.pdf.presentation.common
 
@@ -2903,7 +3093,7 @@ fun PremiumFolderListItem(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\SmartSelectionBottomBar.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\SmartSelectionBottomBar.kt
 ``kotlin
 package com.edu.pdf.presentation.common
 
@@ -3055,7 +3245,7 @@ private fun RowScope.SmartActionItem(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\UniversalTopBar.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\UniversalTopBar.kt
 ``kotlin
 package com.edu.pdf.presentation.common
 
@@ -3103,7 +3293,7 @@ fun UniversalTopBar(
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\GlobalPdfPickerSheet.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\GlobalPdfPickerSheet.kt
 ``kotlin
 package com.edu.pdf.presentation.common.picker
 
@@ -3357,7 +3547,7 @@ private fun PickerPdfRow(pdf: com.edu.pdf.domain.model.PdfFile, searchQuery: Str
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerSheet.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerSheet.kt
 ``kotlin
 package com.edu.pdf.presentation.common.picker
 
@@ -3630,7 +3820,7 @@ private fun MovePickerSheetContent(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerState.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerState.kt
 ``kotlin
 package com.edu.pdf.presentation.common.picker
 
@@ -3665,7 +3855,7 @@ sealed interface MovePickerEvent {
     data class ShowSnackbar(val message: String) : MovePickerEvent
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\MovePickerViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.common.picker
 
@@ -3767,7 +3957,7 @@ class MovePickerViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\PdfPickerViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\common\picker\PdfPickerViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.common.picker
 
@@ -3934,7 +4124,7 @@ class PdfPickerViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\core\MainAppScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\core\MainAppScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.core
 
@@ -4237,7 +4427,7 @@ fun NavGraphBuilder.placeholderSections(navController: NavHostController, isTabl
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\core\PremiumPermissionScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\core\PremiumPermissionScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.core // 🌟 Tumhara naya refactored package!
 
@@ -4372,7 +4562,7 @@ fun PermissionFeatureRow(icon: ImageVector, title: String, subtitle: String) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\FoldersScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\FoldersScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.folders
 
@@ -4614,7 +4804,7 @@ fun PhysicalFolderItem(folderName: String, pdfCount: Int, onClick: () -> Unit) {
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\FoldersViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\FoldersViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.folders
 
@@ -4679,7 +4869,7 @@ class FoldersViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\UnifiedFolderOverlays.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\UnifiedFolderOverlays.kt
 ``kotlin
 package com.edu.pdf.presentation.folders
 
@@ -5011,7 +5201,7 @@ private fun DetailRow(label: String, value: String) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\UnifiedFolderScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\UnifiedFolderScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.folders
 
@@ -5373,7 +5563,7 @@ private fun ProEmptyStateCard(title: String, icon: androidx.compose.ui.graphics.
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\UnifiedFolderViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\UnifiedFolderViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.folders
 
@@ -5728,7 +5918,7 @@ class UnifiedFolderViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\components\FolderMenuSheet.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\components\FolderMenuSheet.kt
 ``kotlin
 package com.edu.pdf.presentation.folders.components
 
@@ -5821,7 +6011,7 @@ private fun MenuOptionItem(icon: ImageVector, text: String, onClick: () -> Unit)
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\vault\VaultScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\vault\VaultScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.folders.vault
 
@@ -6069,7 +6259,7 @@ fun VaultPdfGridItem(pdf: PdfFile, onClick: () -> Unit) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\folders\vault\VaultViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\folders\vault\VaultViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.folders.vault
 
@@ -6151,7 +6341,7 @@ class VaultViewModel @Inject constructor(
             isGridView = isGrid,
             isLoading = false
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), VaultUiState())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, VaultUiState())
 
     fun onAction(action: VaultAction) {
         when (action) {
@@ -6233,7 +6423,7 @@ class VaultViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeOverlays.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeOverlays.kt
 ``kotlin
 package com.edu.pdf.presentation.home
 
@@ -6565,7 +6755,7 @@ private fun DetailRow(label: String, value: String) {
 }
 
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeScreen.kt
 ``kotlin
 @file:Suppress("DEPRECATION")
 package com.edu.pdf.presentation.home
@@ -6903,7 +7093,7 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\HomeViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.home
 
@@ -7271,7 +7461,7 @@ class HomeViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\EmptyStateView.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\EmptyStateView.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -7351,7 +7541,7 @@ fun EmptyStateView(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeContent.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeContent.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -7539,7 +7729,7 @@ fun UnifiedListItem(item: HomeItem, isSelectionMode: Boolean, selectedPdfs: Pers
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeFolderGridItem.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeFolderGridItem.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -7673,7 +7863,7 @@ fun HomeFolderGridItem(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeFolderListItem.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeFolderListItem.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -7703,7 +7893,7 @@ fun HomeFolderListItem(
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeTabs.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\HomeTabs.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -7774,7 +7964,7 @@ fun HomeTabs(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\MoveFolderListItem.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\MoveFolderListItem.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -7868,7 +8058,7 @@ fun MoveFolderListItem(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfActionBottomSheet.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfActionBottomSheet.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -8208,7 +8398,7 @@ fun DetailRow(label: String, value: String) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfGridItem.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfGridItem.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -8350,7 +8540,7 @@ fun PdfGridItem(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfListItem.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfListItem.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -8472,7 +8662,7 @@ fun PdfListItem(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfThumbnail.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\PdfThumbnail.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -8547,7 +8737,7 @@ fun PdfThumbnail(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\SelectionTopBar.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\SelectionTopBar.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -8605,7 +8795,7 @@ fun SelectionTopBar(
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\SortBottomSheet.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\home\components\SortBottomSheet.kt
 ``kotlin
 package com.edu.pdf.presentation.home.components
 
@@ -8681,7 +8871,7 @@ fun SortBottomSheet(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\navigation\Screen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\navigation\Screen.kt
 ``kotlin
 package com.edu.pdf.presentation.navigation
 
@@ -8723,7 +8913,7 @@ sealed interface Screen {
     data object Vault : Screen
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\ocr\OcrComponents.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\ocr\OcrComponents.kt
 ``kotlin
 package com.edu.pdf.presentation.ocr
 
@@ -8860,7 +9050,7 @@ fun LiveTextOverlay(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\ocr\OcrContract.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\ocr\OcrContract.kt
 ``kotlin
 package com.edu.pdf.presentation.ocr
 
@@ -8891,7 +9081,7 @@ sealed interface OcrAction {
     data object ClearError : OcrAction
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\ocr\OcrViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\ocr\OcrViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.ocr
 
@@ -8968,7 +9158,7 @@ class OcrViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\PdfViewerScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\PdfViewerScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer
 
@@ -9243,7 +9433,7 @@ fun PdfViewerScreen(
                     onClick = {
                         captureScreenNonBlocking(activity) { bitmap ->
                             currentCapturedBitmap = bitmap
-                            showAiChat = true // Button dabate hi overlay trigger hoga
+                            showAiChat = true
                         }
                     },
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -9268,6 +9458,8 @@ fun PdfViewerScreen(
             AiChatOverlayScreen(
                 isVisible = showAiChat,
                 currentPageBitmap = currentCapturedBitmap,
+                currentPageNumber = uiState.currentPageNumber, // PdfViewerViewModel mein add karo
+                pdfName = uiState.pdfFileName,                 // PdfViewerViewModel mein add karo
                 onDismiss = {
                     showAiChat = false
                     currentCapturedBitmap = null
@@ -9291,7 +9483,7 @@ private fun captureScreenNonBlocking(activity: Activity, onCaptured: (Bitmap) ->
     }, Handler(Looper.getMainLooper()))
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\PdfViewerViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\PdfViewerViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer
 
@@ -9310,7 +9502,9 @@ data class PdfViewerUiState(
     val pdfUri: Uri? = null,
     val isTopBarVisible: Boolean = true,
     val isNightMode: Boolean = false,
-    val isSearchActive: Boolean = false
+    val isSearchActive: Boolean = false,
+    val currentPageNumber: Int = 1,      // 🌟 NAYA
+    val pdfFileName: String = ""          // 🌟 NAYA
 )
 
 sealed interface PdfViewerAction {
@@ -9334,7 +9528,8 @@ class PdfViewerViewModel @Inject constructor(
             if (it.startsWith("content://") || it.startsWith("file://")) it.toUri()
             else Uri.fromFile(File(it))
         }
-        _uiState.update { it.copy(pdfUri = uri) }
+        val fileName = path?.let { File(it).nameWithoutExtension } ?: ""
+        _uiState.update { it.copy(pdfUri = uri, pdfFileName = fileName) }
     }
 
     fun onAction(action: PdfViewerAction) {
@@ -9347,12 +9542,17 @@ class PdfViewerViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ai\AiChatBottomSheet.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ai\AiChatBottomSheet.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ai
 
-import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.EaseInOutSine
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9360,6 +9560,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9372,13 +9574,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -9387,16 +9589,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9404,6 +9607,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -9411,15 +9615,21 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.edu.pdf.domain.model.ChatMessage
 import com.edu.pdf.domain.model.ChatRole
 
+// ════════════════════════════════════════════════════════════
+// 🌟 ENTRY POINT — Route Composable
+// ════════════════════════════════════════════════════════════
+
 @Composable
 fun AiChatOverlayScreen(
     isVisible: Boolean,
-    currentPageBitmap: Bitmap?,
+    currentPageBitmap: android.graphics.Bitmap?,
+    currentPageNumber: Int = 1,
+    pdfName: String = "",
     onDismiss: () -> Unit,
     viewModel: AiChatViewModel = hiltViewModel()
 ) {
@@ -9428,6 +9638,20 @@ fun AiChatOverlayScreen(
     val haptic = LocalHapticFeedback.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // 🌟 PDF context ViewModel ko do — Bitmap State mein NAHI jayega
+    LaunchedEffect(isVisible, currentPageNumber, pdfName) {
+        if (isVisible) {
+            viewModel.onAction(
+                AiChatAction.SetContext(
+                    pageNumber = currentPageNumber,
+                    pdfName = pdfName,
+                    bitmapRef = currentPageBitmap
+                )
+            )
+        }
+    }
+
+    // 🌟 Auto-scroll on new message
     LaunchedEffect(viewModel.events) {
         viewModel.events.collect { event ->
             if (event is AiChatEvent.ScrollToBottom && state.messages.isNotEmpty()) {
@@ -9436,347 +9660,738 @@ fun AiChatOverlayScreen(
         }
     }
 
-    // 🌟 YAHAN SE ANIMATED VISIBILITY WALA HSSIA REPLACE KAREIN 🌟
     AnimatedVisibility(
         visible = isVisible,
-        enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(400)) + fadeIn(tween(400)),
-        exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300)) + fadeOut(tween(300))
+        enter = slideInVertically(
+            initialOffsetY = { fullHeight -> fullHeight },
+            animationSpec = tween(durationMillis = 300)
+        ) + fadeIn(tween(durationMillis = 300)),
+        exit = slideOutVertically(
+            targetOffsetY = { fullHeight -> fullHeight },
+            animationSpec = tween(durationMillis = 280)
+        ) + fadeOut(tween(durationMillis = 200))
     ) {
-        // 🌟 JADOO YAHAN HAI: Scaffold screen ko 3 lock hisso me baant dega
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = MaterialTheme.colorScheme.background,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0), // Hum manual padding control karenge
+        // 🌟 IS COLUMN KO DEKHO: Iska modifier ab aisa dikhna chahiye
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                // ❌ Purane statusBarsPadding, navigationBarsPadding aur imePadding ko hata kar ye 1 line likho:
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        ) {
 
-            // 1. TOP BAR (Patthar ki tarah Fix rahega)
-            topBar = {
-                TopAppBarClean(
-                    onDismiss = {
-                        keyboardController?.hide()
-                        onDismiss()
-                    },
-                    modifier = Modifier.statusBarsPadding()
-                )
-            },
+            // ── 1. TOP BAR (Iske andar ka code bilkul mat chhedna, ye same rahega) ──
+            AiChatTopBar(
+                pageNumber = state.currentPageNumber,
+                pdfName = state.pdfName,
+                onDismiss = {
+                    keyboardController?.hide()
+                    onDismiss()
+                }
+            )
 
-            // 2. BOTTOM BAR (Sirf ye keyboard ke sath chipak kar chalega)
-            bottomBar = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding() // System buttons ke upar
-                        .imePadding() // 🌟 KEYBOARD WALA SMOOTH JADOO
-                ) {
-                    PremiumInputBar(
-                        input = state.currentInput,
-                        isThinking = state.isAiThinking,
-                        onInputChange = { viewModel.onAction(AiChatAction.UpdateInput(it)) },
-                        onSendClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                            viewModel.onAction(AiChatAction.SendMessage(state.currentInput, currentPageBitmap))
+            // ── 2. CONTENT AREA (Ye bhi bilkul same rahega) ──
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                if (state.messages.isEmpty()) {
+                    AiEmptyState(
+                        prompts = state.suggestedPrompts,
+                        pdfName = state.pdfName,
+                        onPromptClick = { prompt ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.onAction(AiChatAction.OnSmartPromptClick(prompt))
                         },
-                        onStopClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.onAction(AiChatAction.StopStreaming)
-                        }
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    AiMessageList(
+                        messages = state.messages,
+                        isThinking = state.isAiThinking,
+                        listState = listState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                state.errorMessage?.let { error ->
+                    AiErrorBanner(
+                        message = error,
+                        onDismiss = { viewModel.onAction(AiChatAction.DismissError) },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 12.dp, start = 16.dp, end = 16.dp)
                     )
                 }
             }
-        ) { innerPadding ->
 
-            // 3. CONTENT AREA (Beech ka hissa)
-            Box(
+            // ── 3. INPUT BAR (Ye bhi bilkul same rahega) ──
+            AiInputSection(
+                input = state.currentInput,
+                isThinking = state.isAiThinking,
+                onInputChange = {
+                    viewModel.onAction(AiChatAction.UpdateInput(it))
+                },
+                onSendClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    viewModel.onAction(AiChatAction.SendMessage(state.currentInput))
+                },
+                onStopClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.onAction(AiChatAction.StopStreaming)
+                }
+            )
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// TOP BAR
+// ════════════════════════════════════════════════════════════
+
+@Composable
+private fun AiChatTopBar(
+    pageNumber: Int,
+    pdfName: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        shadowElevation = 0.dp,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding) // Top aur Bottom ki space chhod dega
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (state.messages.isEmpty()) {
-                    // YAHAN HILNE WALI PROBLEM SOLVE HUI HAI:
-                    // Isko TopCenter par chipka diya hai, isliye ab height kam hone par ye upar nahi bhagega!
-                    PremiumEmptyState(
-                        prompts = state.suggestedPrompts,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 32.dp),
-                        onPromptClick = { prompt ->
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.onAction(AiChatAction.OnSmartPromptClick(prompt, currentPageBitmap))
-                        }
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Close AI Chat",
+                        tint = MaterialTheme.colorScheme.onBackground
                     )
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp, top = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(24.dp)
-                    ) {
-                        items(state.messages, key = { it.id }) { message ->
-                            PremiumChatBubble(message)
-                        }
+                }
+
+                // 🌟 Pulsing AI icon
+                AiIconPulse(modifier = Modifier.size(34.dp))
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Read AI",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    if (pdfName.isNotBlank()) {
+                        val displayName = if (pdfName.length > 28) {
+                            pdfName.take(28) + "…"
+                        } else pdfName
+
+                        Text(
+                            text = "Page $pageNumber  ·  $displayName",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "Powered by Gemini",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                thickness = 0.5.dp
+            )
         }
     }
 }
 
-// ========================================================
-// WORLD-CLASS UI COMPONENTS
-// ========================================================
+// ════════════════════════════════════════════════════════════
+// PULSING AI ICON
+// ════════════════════════════════════════════════════════════
 
 @Composable
-fun TopAppBarClean(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
+private fun AiIconPulse(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "ai_pulse")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.40f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glow_alpha"
+    )
+
+    Box(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .background(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = glowAlpha),
+                        Color.Transparent
+                    )
+                ),
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
     ) {
-        IconButton(onClick = onDismiss) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-        }
-        Spacer(modifier = Modifier.width(8.dp))
         Icon(
             imageVector = Icons.Default.AutoAwesome,
-            contentDescription = "AI",
+            contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(20.dp)
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = "Read AI Assistant",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
     }
 }
 
+// ════════════════════════════════════════════════════════════
+// MESSAGE LIST
+// ════════════════════════════════════════════════════════════
+
 @Composable
-fun PremiumEmptyState(prompts: List<String>, modifier: Modifier = Modifier, onPromptClick: (String) -> Unit) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        // Arrangement.Center ko hata diya hai taaki ye screen ke top se anchor rahe aur resize na ho
+private fun AiMessageList(
+    messages: List<ChatMessage>,
+    isThinking: Boolean,
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 16.dp,
+            bottom = 24.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        items(messages, key = { it.id }) { message ->
+            AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(tween(200)) + slideInVertically(
+                    initialOffsetY = { it / 4 },
+                    animationSpec = tween(200)
+                )
+            ) {
+                AiMessageBubble(message = message)
+            }
+        }
+
+        // 🌟 Typing indicator — sirf tab show karo jab last message stream nahi kar raha
+        if (isThinking && messages.lastOrNull()?.isStreaming == false) {
+            item(key = "typing_indicator") {
+                TypingIndicator()
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// MESSAGE BUBBLE
+// ════════════════════════════════════════════════════════════
+
+@Composable
+private fun AiMessageBubble(message: ChatMessage) {
+    val isUser = message.role == ChatRole.USER
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
+    ) {
+
+        // AI Avatar
+        if (!isUser) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+
+        // Bubble
+        Column(
+            modifier = Modifier.fillMaxWidth(if (isUser) 0.82f else 0.88f),
+            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 18.dp,
+                            topEnd = 18.dp,
+                            bottomStart = if (isUser) 18.dp else 4.dp,
+                            bottomEnd = if (isUser) 4.dp else 18.dp
+                        )
+                    )
+                    .background(
+                        if (isUser) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                // 🌟 Streaming cursor blink effect
+                val displayText = when {
+                    message.isStreaming && message.text.isNotEmpty() -> message.text + "▋"
+                    message.isStreaming && message.text.isEmpty() -> "▋"
+                    else -> message.text
+                }
+
+                Text(
+                    text = displayText,
+                    color = if (isUser) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+
+        // User Avatar
+        if (isUser) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .background(
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "U",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// TYPING INDICATOR — 3 Dots
+// ════════════════════════════════════════════════════════════
+
+@Composable
+private fun TypingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "typing_dots")
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // AI Avatar
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(28.dp)
                 .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.AutoAwesome,
-                contentDescription = "AI Sparkles",
+                contentDescription = null,
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(14.dp)
             )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // Dots Bubble
+        Box(
+            modifier = Modifier
+                .clip(
+                    RoundedCornerShape(
+                        topStart = 18.dp,
+                        topEnd = 18.dp,
+                        bottomStart = 4.dp,
+                        bottomEnd = 18.dp
+                    )
+                )
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                repeat(3) { dotIndex ->
+                    val dotAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.25f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(
+                                durationMillis = 500,
+                                delayMillis = dotIndex * 160
+                            ),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "dot_alpha_$dotIndex"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                    alpha = dotAlpha
+                                ),
+                                shape = CircleShape
+                            )
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// EMPTY STATE
+// ════════════════════════════════════════════════════════════
+
+@Composable
+private fun AiEmptyState(
+    prompts: List<String>,
+    pdfName: String,
+    onPromptClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .padding(horizontal = 24.dp)
+            .padding(top = 48.dp, bottom = 140.dp), // bottom space for input bar
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Top
+    ) {
+
+        // Hero Icon
+        Box(
+            modifier = Modifier
+                .size(84.dp)
+                .background(
+                    brush = Brush.radialGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f)
+                        )
+                    ),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.AutoAwesome,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(42.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            text = "Hi, I'm Read AI",
+            text = "Read AI",
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.ExtraBold,
             color = MaterialTheme.colorScheme.onBackground
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "How can I help you understand this document today?",
-            style = MaterialTheme.typography.bodyLarge,
+            text = if (pdfName.isNotBlank())
+                "Ask me anything about\n\"${pdfName.take(30)}${if (pdfName.length > 30) "…" else ""}\""
+            else
+                "Ask me anything about this document",
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(40.dp))
 
-        prompts.take(3).forEach { prompt ->
-            Card(
+        // Section header
+        Text(
+            text = "Suggested Questions",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp)
+        )
+
+        // 🌟 Suggestion chips
+        prompts.take(4).forEach { prompt ->
+            AiSuggestionChip(
+                prompt = prompt,
+                onClick = { onPromptClick(prompt) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp)
-                    .clickable { onPromptClick(prompt) },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(16.dp),
-                elevation = CardDefaults.cardElevation(0.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.ChatBubbleOutline,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text(
-                        text = prompt,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PremiumChatBubble(message: ChatMessage) {
-    val isUser = message.role == ChatRole.USER
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        if (!isUser) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.AutoAwesome,
-                    contentDescription = "AI",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-        }
-
-        Box(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .fillMaxWidth(if (isUser) 0.85f else 0.95f)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 20.dp,
-                        topEnd = 20.dp,
-                        bottomStart = if (isUser) 20.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 20.dp
-                    )
-                )
-                .background(if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            Text(
-                text = message.text,
-                color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                style = MaterialTheme.typography.bodyLarge,
-                lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.2f
+                    .padding(vertical = 4.dp)
             )
         }
     }
 }
 
 @Composable
-fun PremiumInputBar(
+private fun AiSuggestionChip(
+    prompt: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.clickable { onClick() },
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(
+            width = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ChatBubbleOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = prompt,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// INPUT BAR
+// ════════════════════════════════════════════════════════════
+
+@Composable
+private fun AiInputSection(
     input: String,
     isThinking: Boolean,
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
-    onStopClick: () -> Unit
+    onStopClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.Bottom
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background,
+        shadowElevation = 12.dp,
+        tonalElevation = 2.dp
     ) {
-        OutlinedTextField(
-            value = input,
-            onValueChange = onInputChange,
-            placeholder = { Text("Message Read AI...") },
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .padding(bottom = 2.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent,
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent
-            ),
-            maxLines = 5,
-            textStyle = MaterialTheme.typography.bodyLarge
-        )
-
-        // Box hata diya, padding direct AnimatedVisibility me daal di
-        AnimatedVisibility(
-            visible = input.isNotBlank() || isThinking,
-            modifier = Modifier.padding(bottom = 6.dp, end = 4.dp, start = 4.dp), // 🌟 Box ki padding yahan aa gayi
-            enter = scaleIn() + fadeIn(),
-            exit = scaleOut() + fadeOut()
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            IconButton(
-                // ... apka purana button code
-                    onClick = if (isThinking) onStopClick else onSendClick,
+
+            // 🌟 Text Field — pill shape, no visible border
+            OutlinedTextField(
+                value = input,
+                onValueChange = onInputChange,
+                placeholder = {
+                    Text(
+                        text = "Message Read AI…",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(22.dp)),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.55f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.45f)
+                ),
+                shape = RoundedCornerShape(22.dp),
+                maxLines = 5,
+                textStyle = MaterialTheme.typography.bodyLarge
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // 🌟 Send ↔ Stop toggle with animation
+            AnimatedContent(
+                targetState = isThinking,
+                label = "send_stop_toggle",
+                transitionSpec = {
+                    (scaleIn(tween(180)) + fadeIn(tween(180))) togetherWith
+                            (scaleOut(tween(120)) + fadeOut(tween(120)))
+                }
+            ) { thinking ->
+                Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .padding(bottom = 4.dp)
+                        .size(44.dp)
+                        .clip(CircleShape)
                         .background(
-                            if (isThinking) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                            CircleShape
+                            color = when {
+                                thinking -> MaterialTheme.colorScheme.error
+                                input.isNotBlank() -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                            }
                         )
+                        .clickable(enabled = thinking || input.isNotBlank()) {
+                            if (thinking) onStopClick() else onSendClick()
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isThinking) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = MaterialTheme.colorScheme.onPrimary,
+                        imageVector = if (thinking) Icons.Default.Stop
+                        else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (thinking) "Stop" else "Send",
+                        tint = if (input.isNotBlank() || thinking) Color.White
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                         modifier = Modifier.size(20.dp)
                     )
                 }
             }
         }
     }
+}
+
+// ════════════════════════════════════════════════════════════
+// ERROR BANNER
+// ════════════════════════════════════════════════════════════
+
+@Composable
+private fun AiErrorBanner(
+    message: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = true,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        modifier = modifier
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.errorContainer,
+            shadowElevation = 4.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss error",
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ai\AiChatContract.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ai\AiChatContract.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ai
 
-import android.graphics.Bitmap
 import androidx.compose.runtime.Immutable
 import com.edu.pdf.domain.model.ChatMessage
 
-// 🌟 STRICT MVI: Immutable State for Strong Skipping Mode
+// 🌟 WORLD STANDARD: Bitmap KABHI State mein nahi rahega
+// Sirf Page Number track karo, Bitmap ViewModel ke andar WeakReference se handle hoga
+
 @Immutable
 data class AiChatState(
     val messages: List<ChatMessage> = emptyList(),
     val currentInput: String = "",
     val isAiThinking: Boolean = false,
-    val currentThumbnail: Bitmap? = null,
+    val isVisible: Boolean = false,
+    val currentPageNumber: Int = 1,    // 🌟 Page number, Bitmap nahi
+    val pdfName: String = "",           // 🌟 Context ke liye
     val suggestedPrompts: List<String> = listOf(
-        "Summarize this page",
-        "Explain in simple terms",
-        "Extract key points",
-        "Translate to Hindi"
-    )
+        "📝 Summarize this page",
+        "🔍 Explain key concepts",
+        "❓ What are the main points?",
+        "🌐 Translate to Hindi"
+    ),
+    val errorMessage: String? = null
 )
 
-// 🌟 STRICT MVI: Actions from UI to ViewModel
 sealed interface AiChatAction {
     data class UpdateInput(val text: String) : AiChatAction
-    data class SendMessage(val query: String, val pageBitmap: Bitmap?) : AiChatAction
-    data class OnSmartPromptClick(val prompt: String, val pageBitmap: Bitmap?) : AiChatAction
+    data class SendMessage(val query: String) : AiChatAction
+    data class OnSmartPromptClick(val prompt: String) : AiChatAction
+    data class SetContext(
+        val pageNumber: Int,
+        val pdfName: String,
+        val bitmapRef: android.graphics.Bitmap? // 🌟 Direct pass, State mein store nahi
+    ) : AiChatAction
+    data class SetVisibility(val visible: Boolean) : AiChatAction
     data object StopStreaming : AiChatAction
     data object ClearChat : AiChatAction
+    data object DismissError : AiChatAction
 }
 
-// 🌟 STRICT MVI: One-time events (like showing a Toast)
 sealed interface AiChatEvent {
     data class ShowError(val message: String) : AiChatEvent
     data object ScrollToBottom : AiChatEvent
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ai\AiChatViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ai\AiChatViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ai
 
@@ -9791,6 +10406,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.lang.ref.WeakReference
 import java.util.UUID
 import javax.inject.Inject
 
@@ -9802,85 +10418,150 @@ class AiChatViewModel @Inject constructor(
     private val _state = MutableStateFlow(AiChatState())
     val state = _state.asStateFlow()
 
-    private val _events = Channel<AiChatEvent>()
+    private val _events = Channel<AiChatEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
     private var streamingJob: Job? = null
 
+    // 🌟 WORLD STANDARD: WeakReference — Bitmap GC ke liye available rahega
+    // State mein nahi, isliye NO memory leak
+    private var currentBitmapRef: WeakReference<Bitmap?> = WeakReference(null)
+
     fun onAction(action: AiChatAction) {
         when (action) {
-            is AiChatAction.UpdateInput -> _state.update { it.copy(currentInput = action.text) }
-            is AiChatAction.ClearChat -> _state.update { it.copy(messages = emptyList()) }
+            is AiChatAction.UpdateInput ->
+                _state.update { it.copy(currentInput = action.text) }
+
+            is AiChatAction.SetContext -> {
+                // 🌟 Bitmap WeakReference mein store karo — State mein NAHI
+                currentBitmapRef = WeakReference(action.bitmapRef)
+                _state.update {
+                    it.copy(
+                        currentPageNumber = action.pageNumber,
+                        pdfName = action.pdfName
+                    )
+                }
+            }
+
+            is AiChatAction.SetVisibility ->
+                _state.update { it.copy(isVisible = action.visible) }
+
+            is AiChatAction.ClearChat ->
+                _state.update { it.copy(messages = emptyList(), errorMessage = null) }
+
             is AiChatAction.StopStreaming -> stopStreaming()
-            is AiChatAction.SendMessage -> handleSendMessage(action.query, action.pageBitmap)
-            is AiChatAction.OnSmartPromptClick -> handleSendMessage(action.prompt, action.pageBitmap)
+
+            is AiChatAction.SendMessage ->
+                handleSendMessage(action.query, currentBitmapRef.get())
+
+            is AiChatAction.OnSmartPromptClick ->
+                handleSendMessage(action.prompt, currentBitmapRef.get())
+
+            is AiChatAction.DismissError ->
+                _state.update { it.copy(errorMessage = null) }
         }
     }
 
-    private fun handleSendMessage(query: String, pageBitmap: Bitmap?) {
+    private fun handleSendMessage(query: String, bitmap: Bitmap?) {
         if (query.isBlank()) return
 
-        // 1. Add User Message
-        val userMsg = ChatMessage(id = UUID.randomUUID().toString(), role = ChatRole.USER, text = query)
+        // 🌟 Smart System Context: PDF name aur page number Gemini ko batao
+        val contextualQuery = buildString {
+            if (_state.value.pdfName.isNotBlank()) {
+                append("[PDF: ${_state.value.pdfName}, Page ${_state.value.currentPageNumber}]\n")
+            }
+            append(query)
+        }
+
+        val userMsg = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = ChatRole.USER,
+            text = query  // UI mein sirf user ki query dikhao, context hidden
+        )
+
         _state.update {
             it.copy(
                 messages = it.messages + userMsg,
                 currentInput = "",
-                isAiThinking = true
+                isAiThinking = true,
+                errorMessage = null
             )
         }
 
         triggerScrollToBottom()
 
-        // 2. Prepare AI Message Placeholder
         val aiMsgId = UUID.randomUUID().toString()
-        val aiPlaceholder = ChatMessage(id = aiMsgId, role = ChatRole.MODEL, text = "", isStreaming = true)
+        val aiPlaceholder = ChatMessage(
+            id = aiMsgId,
+            role = ChatRole.MODEL,
+            text = "",
+            isStreaming = true
+        )
         _state.update { it.copy(messages = it.messages + aiPlaceholder) }
 
-        // 3. Start Streaming from Repository
         streamingJob?.cancel()
         streamingJob = viewModelScope.launch {
             try {
-                aiRepository.chatWithPdfStream(query, pageBitmap).collect { chunk ->
-                    _state.update { currentState ->
-                        val updatedMessages = currentState.messages.map { msg ->
-                            if (msg.id == aiMsgId) msg.copy(text = msg.text + chunk) else msg
+                aiRepository.chatWithPdfStream(contextualQuery, bitmap).collect { chunk ->
+                    if (chunk.isNotEmpty()) {
+                        _state.update { currentState ->
+                            currentState.copy(
+                                messages = currentState.messages.map { msg ->
+                                    if (msg.id == aiMsgId) msg.copy(text = msg.text + chunk)
+                                    else msg
+                                }
+                            )
                         }
-                        currentState.copy(messages = updatedMessages)
+                        triggerScrollToBottom()
                     }
-                    triggerScrollToBottom()
                 }
-                // Stream finished
                 finalizeAiMessage(aiMsgId)
             } catch (e: Exception) {
-                _events.send(AiChatEvent.ShowError(e.localizedMessage ?: "AI generation failed"))
                 finalizeAiMessage(aiMsgId)
+                val errorText = when {
+                    e.message?.contains("API key", ignoreCase = true) == true ->
+                        "API Key invalid. Go to Settings → Add Gemini Key."
+                    e.message?.contains("network", ignoreCase = true) == true ->
+                        "No internet connection."
+                    else -> "AI failed: ${e.localizedMessage}"
+                }
+                _state.update { it.copy(errorMessage = errorText) }
             }
         }
     }
 
     private fun stopStreaming() {
         streamingJob?.cancel()
-        _state.value.messages.lastOrNull { it.isStreaming }?.let { activeMsg ->
-            finalizeAiMessage(activeMsg.id)
+        _state.value.messages.lastOrNull { it.isStreaming }?.let {
+            finalizeAiMessage(it.id)
         }
     }
 
     private fun finalizeAiMessage(aiMsgId: String) {
         _state.update { currentState ->
-            val updatedMessages = currentState.messages.map { msg ->
-                if (msg.id == aiMsgId) msg.copy(isStreaming = false) else msg
-            }
-            currentState.copy(messages = updatedMessages, isAiThinking = false)
+            currentState.copy(
+                messages = currentState.messages.map { msg ->
+                    if (msg.id == aiMsgId) msg.copy(isStreaming = false) else msg
+                },
+                isAiThinking = false
+            )
         }
     }
 
     private fun triggerScrollToBottom() {
-        viewModelScope.launch { _events.send(AiChatEvent.ScrollToBottom) }
+        viewModelScope.launch {
+            _events.send(AiChatEvent.ScrollToBottom)
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // 🌟 ViewModel clear hone par WeakReference bhi clear
+        currentBitmapRef.clear()
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ocr\OcrContract.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ocr\OcrContract.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ocr
 
@@ -9911,7 +10592,7 @@ sealed interface OcrEvent {
     data class ShowToast(val message: String) : OcrEvent
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ocr\OcrSelectionOverlay.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ocr\OcrSelectionOverlay.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ocr
 
@@ -10184,7 +10865,7 @@ fun OcrSelectionOverlay(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ocr\OcrViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\pdfviewer\ocr\OcrViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.pdfviewer.ocr
 
@@ -10258,7 +10939,7 @@ class OcrViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\search\SearchScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\search\SearchScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.search
 
@@ -10799,7 +11480,7 @@ fun EmptyStateView(query: String) {
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\search\SearchViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\search\SearchViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.search
 
@@ -10860,9 +11541,8 @@ class SearchViewModel @Inject constructor(
     private val _events = kotlinx.coroutines.channels.Channel<SearchEvent>()
     val events = _events.receiveAsFlow()
 
-    // 🌟 RE-ENGINEERED FLOWS FOR STRICT MVI STATE
+    // 🌟 INSTANT SEARCH: Debounce puri tarah hata diya
     private val searchResultsFlow = _searchQuery
-        .debounce(300L) // Prevent DB crash while fast typing
         .map { it.trim() }
         .distinctUntilChanged()
         .flatMapLatest { query ->
@@ -10892,8 +11572,8 @@ class SearchViewModel @Inject constructor(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = SearchUiState(isLoading = true)
+        started = SharingStarted.Eagerly, // 🌟 Changed to Eagerly for better test reliability
+        initialValue = SearchUiState(isLoading = false) // 🌟 Set initial loading to false
     )
 
     // 🌟 THE REDUCER: UI bas Actions bhejega yahan
@@ -10954,7 +11634,7 @@ class SearchViewModel @Inject constructor(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\search\components\HighlightedText.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\search\components\HighlightedText.kt
 ``kotlin
 package com.edu.pdf.presentation.search.components
 
@@ -11053,7 +11733,7 @@ fun HighlightedText(
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\settings\SettingsScreen.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\settings\SettingsScreen.kt
 ``kotlin
 package com.edu.pdf.presentation.settings
 
@@ -11171,7 +11851,7 @@ fun SettingsScreen(
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\presentation\settings\SettingsViewModel.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\presentation\settings\SettingsViewModel.kt
 ``kotlin
 package com.edu.pdf.presentation.settings
 
@@ -11236,7 +11916,10 @@ class SettingsViewModel @Inject constructor(
 
     private fun verifyAndSave() {
         val currentState = _state.value
-        if (currentState.primaryKey.isBlank()) {
+        // 🌟 FIX 1: Hamesha trim() use karo taaki copy-paste ke hidden spaces hat jayein
+        val primaryKeyTrimmed = currentState.primaryKey.trim()
+
+        if (primaryKeyTrimmed.isBlank()) {
             _state.update { it.copy(validationMessage = "Primary Key is required!") }
             return
         }
@@ -11244,27 +11927,75 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(isVerifying = true, validationMessage = null) }
 
         viewModelScope.launch {
-            val isValid = withContext(Dispatchers.IO) {
+            // Hum boolean (true/false) ke bajaye String result lenge taaki error padh sakein
+            val resultMessage = withContext(Dispatchers.IO) {
                 try {
-                    val model = GenerativeModel(modelName = "gemini-1.5-flash", apiKey = currentState.primaryKey)
-                    model.generateContent("ping")
-                    true
+                    val model = GenerativeModel(
+                        modelName = "gemini-2.5-flash",
+                        apiKey = primaryKeyTrimmed
+                    )
+                    // "ping" ki jagah "Hello" bhejo, kabhi-kabhi too-short prompts block ho jate hain
+                    model.generateContent("Hello")
+                    "SUCCESS"
                 } catch (e: Exception) {
-                    false
+                    // 🌟 FIX 2: Asli exception ka message pakdo taaki UI par dikha sakein
+                    e.localizedMessage ?: "Unknown Network Error"
                 }
             }
 
-            if (isValid) {
-                keyManager.saveKeys(currentState.primaryKey, currentState.fallbackKey1, currentState.fallbackKey2)
-                _state.update { it.copy(isVerifying = false, isSuccess = true, validationMessage = "AI Keys Verified & Secured! ✅") }
+            if (resultMessage == "SUCCESS") {
+                keyManager.saveKeys(
+                    primaryKeyTrimmed,
+                    currentState.fallbackKey1.trim(),
+                    currentState.fallbackKey2.trim()
+                )
+                _state.update {
+                    it.copy(
+                        isVerifying = false,
+                        isSuccess = true,
+                        validationMessage = "AI Keys Verified & Secured! ✅"
+                    )
+                }
             } else {
-                _state.update { it.copy(isVerifying = false, isSuccess = false, validationMessage = "Invalid Primary Key. ❌") }
+                // Yahan tumhe sachai pata chalegi ki aakhir API key kyu nahi le raha tha!
+                _state.update {
+                    it.copy(
+                        isVerifying = false,
+                        isSuccess = false,
+                        validationMessage = "Failed: $resultMessage ❌"
+                    )
+                }
             }
         }
     }
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\ui\theme\Color.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\receiver\FileDetectionReceiver.kt
+``kotlin
+package com.edu.pdf.receiver
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import com.edu.pdf.worker.PdfDetectionWorker
+
+class FileDetectionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+        val action = intent?.action
+        Log.d("FileDetectionReceiver", "Received action: $action")
+        
+        if (action == Intent.ACTION_MEDIA_SCANNER_SCAN_FILE || 
+            action == Intent.ACTION_MEDIA_SCANNER_FINISHED) {
+            context?.let {
+                Log.d("FileDetectionReceiver", "Triggering PDF Scan from Receiver")
+                PdfDetectionWorker.enqueueNow(it)
+            }
+        }
+    }
+}
+``n
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\ui\theme\Color.kt
 ``kotlin
 package com.edu.pdf.ui.theme
 
@@ -11286,7 +12017,7 @@ val DarkBackground = Color(0xFF171923)
 val DarkSurface = Color(0xFF171923)
 val DarkSurfaceVariant = Color(0xFF2A2D3D)
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\ui\theme\Theme.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\ui\theme\Theme.kt
 ``kotlin
 @file:Suppress("DEPRECATION")
 
@@ -11367,7 +12098,7 @@ fun PdfTheme(
     )
 }
 ``n
-### FILE: C:\Users\saud\project\pdf\app\src\main\java\com\edu\pdf\ui\theme\Type.kt
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\ui\theme\Type.kt
 ``kotlin
 package com.edu.pdf.ui.theme
 
@@ -11404,8 +12135,94 @@ val Typography = Typography(
     */
 )
 ``n
+### FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\src\main\java\com\edu\pdf\worker\PdfDetectionWorker.kt
+``kotlin
+package com.edu.pdf.worker
+
+import android.content.Context
+import android.util.Log
+import androidx.hilt.work.HiltWorker
+import androidx.work.*
+import com.edu.pdf.domain.repository.PdfRepository
+import com.edu.pdf.notification.PdfNotificationHelper
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
+import com.edu.pdf.domain.model.SortType
+import kotlinx.coroutines.flow.first
+import java.util.concurrent.TimeUnit
+
+@HiltWorker
+class PdfDetectionWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted workerParams: WorkerParameters,
+    private val repository: PdfRepository,
+    private val notificationHelper: PdfNotificationHelper
+) : CoroutineWorker(context, workerParams) {
+
+    override suspend fun doWork(): Result {
+        Log.d("PdfDetectionWorker", "Worker started! Something changed in storage.")
+        return try {
+            // 1. Scan the device for new PDFs
+            repository.scanAndSavePdfs()
+
+            // 2. Find very recent PDFs (Ordered by Date Modified)
+            // 🌟 CRITICAL FIX: 'getRecentPdfs' sirf opened files dikhata hai.
+            // Hum 'getAllPdfs' use karenge taaki nayi aayi files (Jo khuli nahi hain) wo bhi milein.
+            val latestPdfs = repository.getAllPdfs(SortType.DATE_DESC).first().take(10)
+            val nowSeconds = System.currentTimeMillis() / 1000
+            
+            Log.d("PdfDetectionWorker", "Scanning top 10 newest PDFs in system")
+
+            latestPdfs.forEach { pdf ->
+                // 🌟 RELAXED CHECK: 5 minute window (300 seconds)
+                val ageSeconds = nowSeconds - pdf.lastModified
+                Log.d("PdfDetectionWorker", "Analyzing: ${pdf.name}, Age: ${ageSeconds}s")
+                
+                if (ageSeconds >= 0 && ageSeconds < 300) { 
+                     Log.d("PdfDetectionWorker", "NOTIFYING: ${pdf.name}")
+                     notificationHelper.showNewPdfNotification(pdf.name, pdf.path)
+                }
+            }
+
+            Result.success()
+        } catch (e: Exception) {
+            Log.e("PdfDetectionWorker", "Worker Error: ${e.message}")
+            Result.retry()
+        }
+    }
+
+    companion object {
+        fun enqueue(context: Context) {
+            val constraints = Constraints.Builder()
+                .addContentUriTrigger(android.provider.MediaStore.Files.getContentUri("external"), true)
+                .build()
+
+            val request = OneTimeWorkRequestBuilder<PdfDetectionWorker>()
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "PdfDetectionWork",
+                ExistingWorkPolicy.KEEP, // 🌟 Changed to KEEP to allow parallel triggers
+                request
+            )
+        }
+
+        fun enqueueNow(context: Context) {
+            val request = OneTimeWorkRequestBuilder<PdfDetectionWorker>()
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "PdfDetectionWorkNow", // Different ID to avoid collision
+                ExistingWorkPolicy.REPLACE,
+                request
+            )
+        }
+    }
+}
+``n
 ## 4. BUILD CONFIGURATIONS
-### CONFIG FILE: C:\Users\saud\project\pdf\app\build.gradle.kts
+### CONFIG FILE: C:\Users\saud\AndroidStudioProjects\pdf\app\build.gradle.kts
 ``
 plugins {
     alias(libs.plugins.android.application)
@@ -11530,13 +12347,15 @@ dependencies {
     implementation(libs.google.ai.client)
     implementation(libs.google.mlkit.genai)
     implementation(libs.androidx.security.crypto)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
 
 }
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 ``n
-### CONFIG FILE: C:\Users\saud\project\pdf\gradle\libs.versions.toml
+### CONFIG FILE: C:\Users\saud\AndroidStudioProjects\pdf\gradle\libs.versions.toml
 ``
 [versions]
 agp = "9.2.0"
@@ -11581,6 +12400,8 @@ mlkit-devanagari-gms = "16.0.1"
 generativeAi = "0.9.0"
 mlkitGenAi = "1.0.0-beta2"
 securityCrypto = "1.1.0"
+mockk = "1.13.10"
+coroutinesTest = "1.8.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -11643,7 +12464,8 @@ mlkit-text-recognition-devanagari-gms = { group = "com.google.android.gms", name
 google-ai-client = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeAi" }
 google-mlkit-genai = { group = "com.google.mlkit", name = "genai-prompt", version.ref = "mlkitGenAi" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
-
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
@@ -11653,7 +12475,7 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 google-gms-google-services = { id = "com.google.gms.google-services", version.ref = "googleGmsGoogleServices" }
 google-firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "googleFirebaseCrashlytics" }
 ``n
-### CONFIG FILE: C:\Users\saud\project\pdf\build.gradle.kts
+### CONFIG FILE: C:\Users\saud\AndroidStudioProjects\pdf\build.gradle.kts
 ``
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
@@ -11665,7 +12487,7 @@ plugins {
     alias(libs.plugins.google.firebase.crashlytics) apply false
 }
 ``n
-### CONFIG FILE: C:\Users\saud\project\pdf\settings.gradle.kts
+### CONFIG FILE: C:\Users\saud\AndroidStudioProjects\pdf\settings.gradle.kts
 ``
 pluginManagement {
     repositories {

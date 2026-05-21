@@ -119,37 +119,34 @@ class HomeViewModel @Inject constructor(
     private val userPreferences: UserPreferences
 ) : ViewModel() {
 
-    private val _sortType = MutableStateFlow(SortType.DATE_DESC)
-    private val _isRefreshing = MutableStateFlow(false)
-
+    // 🌟 STRICT MVI: Ek hi Single Source of Truth
     private val _internalState = MutableStateFlow(HomeUiState(isLoading = true, activeSheetState = HomeSheetState.None))
     private var hasInitialized = false
 
+    // 🌟 NAYA: _internalState se sortType nikal kar baki flows ko denge
+    private val sortTypeFlow = _internalState.map { it.sortType }.distinctUntilChanged()
 
-    // 1. Sirf Folders ke liye Flow
-    // 1. 🌟 ELITE MVI FIX: Folders ab Sort Type ke hisaab se react karenge
-    private val currentFoldersFlow = _sortType.flatMapLatest { sort ->
+    private val currentFoldersFlow = sortTypeFlow.flatMapLatest { sort ->
         repository.getManagedFolders(null, isVault = false).map { folders ->
             val sortedFolders = when (sort) {
                 SortType.NAME_ASC -> folders.sortedBy { it.name.lowercase() }
                 SortType.NAME_DESC -> folders.sortedByDescending { it.name.lowercase() }
                 SortType.DATE_DESC -> folders.sortedByDescending { it.createdAt }
                 SortType.DATE_ASC -> folders.sortedBy { it.createdAt }
-                SortType.SIZE_DESC -> folders.sortedByDescending { it.pdfCount } // Folder ke liye size = file count
+                SortType.SIZE_DESC -> folders.sortedByDescending { it.pdfCount }
                 SortType.SIZE_ASC -> folders.sortedBy { it.pdfCount }
             }
             sortedFolders.map { HomeItem.FolderItem(it) }.toImmutableList()
         }
     }.flowOn(Dispatchers.Default)
 
-    // 2. PDFs ke liye Paging Flow (Strict MVI - UI logic se alag)
-    val pagedUncategorizedPdfsFlow = _sortType.flatMapLatest { sort ->
+    val pagedUncategorizedPdfsFlow = sortTypeFlow.flatMapLatest { sort ->
         repository.getAllPdfsPaged(sort).map { pagingData ->
             pagingData.map { HomeItem.PdfItem(it) }
         }
     }.cachedIn(viewModelScope)
 
-    private val favoritePdfsFlow = _sortType.flatMapLatest { sort -> repository.getFavoritePdfs(sort) }
+    private val favoritePdfsFlow = sortTypeFlow.flatMapLatest { sort -> repository.getFavoritePdfs(sort) }
 
     private val recentItemsFlow = combine(repository.getRecentPdfs(), repository.getRecentFolders()) { recentPdfs, recentFolders ->
         val pdfItems = recentPdfs.map { HomeItem.PdfItem(it) }
@@ -159,32 +156,25 @@ class HomeViewModel @Inject constructor(
             .take(50)
     }
 
-    // 🌟 FIX: Data flows ko Triple mein group kar diya taaki 5-flow limit cross na ho
-    // 🌟 FIX: unifiedItemsFlow ki jagah ab currentFoldersFlow aayega
     private val uiDataFlow = combine(recentItemsFlow, currentFoldersFlow, favoritePdfsFlow) { recent, folders, favs ->
         Triple(recent, folders, favs)
     }
 
-    private val prefDataFlow = combine(userPreferences.isGridViewFlow, _sortType, _isRefreshing) { isGrid, sort, refreshing ->
-        Triple(isGrid, sort, refreshing)
-    }
-
-    // Ab hum sirf 4 chizein combine kar rahe hain: uiData, prefData, tree, internal
+    // 🌟 STRICT MVI FIX: prefDataFlow hata diya! Ab _internalState khud sab handle karega
     val uiState: StateFlow<HomeUiState> = combine(
         uiDataFlow,
-        prefDataFlow,
+        userPreferences.isGridViewFlow,
         repository.getAllManagedFolders(isVault = false),
         _internalState
-    ) { uiData, prefData, tree, internal ->
+    ) { uiData, isGrid, tree, internal ->
         internal.copy(
             isLoading = false,
             recentItems = uiData.first.toImmutableList(),
             currentFolders = uiData.second,
             favoritePdfs = uiData.third.toImmutableList(),
             foldersTree = tree.toImmutableList(),
-            isGridView = prefData.first,
-            sortType = prefData.second,
-            isRefreshing = prefData.third
+            isGridView = isGrid
+            // isRefreshing aur sortType automatically 'internal' se aa jayenge!
         )
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
@@ -235,7 +225,10 @@ class HomeViewModel @Inject constructor(
             is HomeAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = HomeSheetState.None) }
 // OnTextInputChange wali puri line delete kar di gayi hai
 
-            is HomeAction.UpdateSortType -> { _sortType.value = action.type; onAction(HomeAction.CloseSheet) }
+            is HomeAction.UpdateSortType -> {
+                // 🌟 MVI: Directly update single state
+                _internalState.update { it.copy(sortType = action.type, activeSheetState = HomeSheetState.None) }
+            }
 
             is HomeAction.ConfirmCreateFolder -> {
                 val folderName = action.folderName.trim() // 🌟 अब डेटा सीधे action से आ रहा है
@@ -302,7 +295,11 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ToggleViewMode -> viewModelScope.launch { userPreferences.saveGridViewPreference(!userPreferences.isGridViewFlow.first()) }
             is HomeAction.RefreshData -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    _isRefreshing.value = true; scanPdfsUseCase(); delay(800); _isRefreshing.value = false
+                    // 🌟 MVI: Directly update single state
+                    _internalState.update { it.copy(isRefreshing = true) }
+                    scanPdfsUseCase()
+                    delay(800)
+                    _internalState.update { it.copy(isRefreshing = false) }
                 }
             }
             is HomeAction.ValidateAndOpenPdf -> {

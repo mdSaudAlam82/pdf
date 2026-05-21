@@ -78,7 +78,7 @@ class VaultViewModel @Inject constructor(
             isGridView = isGrid,
             isLoading = false
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), VaultUiState())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, VaultUiState())
 
     fun onAction(action: VaultAction) {
         when (action) {

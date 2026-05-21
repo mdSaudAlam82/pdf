@@ -121,6 +121,8 @@ dependencies {
     implementation(libs.google.ai.client)
     implementation(libs.google.mlkit.genai)
     implementation(libs.androidx.security.crypto)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
 
 }
 ksp {

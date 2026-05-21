@@ -12,7 +12,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,6 +45,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -117,51 +119,46 @@ fun OcrSelectionOverlay(
                             }
                         )
                     }
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                dragStart = offset
-                                dragCurrent = offset
-                                selectedIndices = emptySet()
-                            },
-                            onDrag = { change, _ ->
-                                dragCurrent = change.position
-                                val start = dragStart ?: return@detectDragGestures
-                                val current = dragCurrent ?: return@detectDragGestures
+                    // 🌟 ELITE FIX: Using Smart Stylus Modifier for Palm Rejection
+                    .smartStylusSelection(
+                        onSelectionStart = { offset ->
+                            dragStart = offset
+                            dragCurrent = offset
+                            selectedIndices = emptySet()
+                        },
+                        onSelectionDrag = { currentPosition ->
+                            dragCurrent = currentPosition
+                            val start = dragStart ?: return@smartStylusSelection
+                            val current = dragCurrent ?: return@smartStylusSelection
 
-                                val dragRect = Rect(
-                                    left = min(start.x, current.x),
-                                    top = min(start.y, current.y),
-                                    right = max(start.x, current.x),
-                                    bottom = max(start.y, current.y)
-                                )
+                            val dragRect = Rect(
+                                left = min(start.x, current.x),
+                                top = min(start.y, current.y),
+                                right = max(start.x, current.x),
+                                bottom = max(start.y, current.y)
+                            )
 
-                                val newSelected = mutableSetOf<Int>()
-                                state.extractedTextBlocks.forEachIndexed { index, block ->
-                                    block.boundingBox?.let { rect ->
-                                        val blockRect = Rect(
-                                            left = rect.left.toFloat(),
-                                            top = rect.top.toFloat(),
-                                            right = rect.right.toFloat(),
-                                            bottom = rect.bottom.toFloat()
-                                        )
-                                        if (dragRect.overlaps(blockRect)) {
-                                            newSelected.add(index)
-                                        }
+                            val newSelected = mutableSetOf<Int>()
+                            state.extractedTextBlocks.forEachIndexed { index, block ->
+                                block.boundingBox?.let { rect ->
+                                    val blockRect = Rect(
+                                        left = rect.left.toFloat(),
+                                        top = rect.top.toFloat(),
+                                        right = rect.right.toFloat(),
+                                        bottom = rect.bottom.toFloat()
+                                    )
+                                    if (dragRect.overlaps(blockRect)) {
+                                        newSelected.add(index)
                                     }
                                 }
-                                selectedIndices = newSelected
-                            },
-                            onDragEnd = {
-                                dragStart = null
-                                dragCurrent = null
-                            },
-                            onDragCancel = {
-                                dragStart = null
-                                dragCurrent = null
                             }
-                        )
-                    }
+                            selectedIndices = newSelected
+                        },
+                        onSelectionEnd = {
+                            dragStart = null
+                            dragCurrent = null
+                        }
+                    )
             ) {
                 // Drawing Text Boxes
                 state.extractedTextBlocks.forEachIndexed { index, block ->
@@ -264,6 +261,34 @@ fun OcrSelectionOverlay(
                     .background(Color.White.copy(alpha = 0.8f), shape = MaterialTheme.shapes.small)
             ) {
                 Icon(Icons.Default.Close, contentDescription = "Close Scanner", tint = Color.Black)
+            }
+        }
+    }
+}
+fun Modifier.smartStylusSelection(
+    onSelectionStart: (Offset) -> Unit,
+    onSelectionDrag: (Offset) -> Unit,
+    onSelectionEnd: () -> Unit
+): Modifier = this.pointerInput(Unit) {
+    awaitEachGesture {
+        val downEvent = awaitFirstDown(requireUnconsumed = false)
+
+        // 🌟 PALM REJECTION: Sirf Pen (Stylus) ya Finger Touch (Single Touch) allow hoga
+        if (downEvent.type == PointerType.Stylus || downEvent.type == PointerType.Touch) {
+            onSelectionStart(downEvent.position)
+
+            var isDragging = true
+            while (isDragging) {
+                val event = awaitPointerEvent()
+                val dragChange = event.changes.firstOrNull { it.id == downEvent.id && it.pressed }
+
+                if (dragChange != null) {
+                    onSelectionDrag(dragChange.position)
+                    dragChange.consume() // Consume zaroori hai taaki peeche ka PDF scroll na ho
+                } else {
+                    isDragging = false
+                    onSelectionEnd()
+                }
             }
         }
     }
