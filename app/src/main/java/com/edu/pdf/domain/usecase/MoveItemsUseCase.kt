@@ -1,30 +1,38 @@
 package com.edu.pdf.domain.usecase
 
-import com.edu.pdf.domain.model.HomeItem
+import android.content.Context
 import com.edu.pdf.domain.repository.PdfRepository
+import com.edu.pdf.worker.MoveWorker
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 
-/**
- * 🌟 MASHINE 1: MoveItemsUseCase
- * Iska kaam hai PDFs aur Folders ko unki purani jagah se nayi jagah bhej dena.
- */
+
 class MoveItemsUseCase @Inject constructor(
+    @param:ApplicationContext private val context: Context,
     private val repository: PdfRepository
 ) {
-    suspend operator fun invoke(items: List<HomeItem>, targetFolderId: String?, isVault: Boolean): Result<Unit> {
+    suspend operator fun invoke(
+        selectedIds: Set<String>, 
+        folderIds: List<String>, 
+        targetFolderId: String?, 
+        sourcePath: String?, // 🌟 NAYA: To return back home
+        isVault: Boolean
+    ): Result<Unit> {
         return try {
-            val pdfIds = items.filterIsInstance<HomeItem.PdfItem>().map { it.pdf.id }
-            val folderIds = items.filterIsInstance<HomeItem.FolderItem>().map { it.folder.folderId }
-
-            // 1. Pehle PDFs ko move karo
-            if (pdfIds.isNotEmpty()) {
-                repository.movePdfsToVirtualFolder(pdfIds, targetFolderId, isVault)
+            if (selectedIds.size > 5 || folderIds.size > 5) {
+                val batchId = System.currentTimeMillis()
+                repository.markPdfsForWorker(selectedIds.toList(), batchId)
+                
+                // Handover both target and source
+                MoveWorker.start(context, batchId, folderIds, targetFolderId, sourcePath, isVault)
+                return Result.success(Unit)
             }
 
-            // 2. Phir Folders ko move karo
-            folderIds.forEach { folderId ->
-                repository.moveFolderToVirtualFolder(folderId, targetFolderId, isVault)
+            // Small moves (Synchronous)
+            if (selectedIds.isNotEmpty()) {
+                repository.movePdfsToVirtualFolder(selectedIds.toList(), targetFolderId, isVault)
             }
+            folderIds.forEach { repository.moveFolderToVirtualFolder(it, targetFolderId, isVault) }
 
             Result.success(Unit)
         } catch (e: Exception) {

@@ -7,6 +7,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RawQuery
+import androidx.room.Transaction
+import androidx.room.Update
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.edu.pdf.data.local.entity.FolderEntity
 import com.edu.pdf.data.local.entity.PdfEntity
@@ -156,8 +158,19 @@ interface PdfDao {
     @Query("UPDATE pdf_table SET parentPath = :newParentPath, isVault = :isVault WHERE id = :pdfId")
     suspend fun movePdfToFolder(pdfId: String, newParentPath: String?, isVault: Boolean)
 
+    // 🌟 THE 2026 PERSISTENCE ENGINE: Mark IDs for Worker (Bypass 10KB limit)
+    @Query("UPDATE pdf_table SET lastOpenedTime = :workerBatchId WHERE id IN (:ids)")
+    suspend fun markPdfsForWorker(ids: List<String>, workerBatchId: Long)
+
+    @Query("SELECT * FROM pdf_table WHERE lastOpenedTime = :workerBatchId")
+    suspend fun getPdfsByWorkerBatchId(workerBatchId: Long): List<PdfEntity>
+
     @Query("UPDATE pdf_table SET id = :newId, path = :newPath WHERE id = :oldId")
     suspend fun updatePdfIdAndPath(oldId: String, newId: String, newPath: String)
+
+    @Transaction
+    @Update
+    suspend fun movePdfsBulk(updates: List<PdfEntity>)
 
     @Query("SELECT id FROM pdf_table WHERE isVault = 0")
     suspend fun getAllPublicPdfIds(): List<String>

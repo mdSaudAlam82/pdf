@@ -31,7 +31,10 @@ object DatabaseModule {
             PdfDatabase::class.java,
             "pdf_master_db"
         )
-            .addMigrations(MIGRATION_9_10) // 🌟 Apply the migration
+            .addMigrations(MIGRATION_9_10)
+            // 🌟 2026 PERFORMANCE FIX: Enable WAL mode for concurrent Read/Write
+            // This prevents "White Screen" lag while thousands of PDFs are moving in background
+            .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
     }
 

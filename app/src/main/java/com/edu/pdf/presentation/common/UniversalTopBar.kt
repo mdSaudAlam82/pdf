@@ -8,13 +8,14 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,6 +27,8 @@ fun UniversalTopBar(
     showSort: Boolean = false,
     showToggleView: Boolean = true,
     showSelectAll: Boolean = true,
+    navigationIcon: ImageVector? = null, // 🌟 NAYA: Back or Cross
+    onBackClick: (() -> Unit)? = null,   // 🌟 NAYA: Action
     onSelectAllClick: (() -> Unit)? = null,
     onSearchClick: (() -> Unit)? = null,
     onSortClick: (() -> Unit)? = null,
@@ -33,10 +36,26 @@ fun UniversalTopBar(
     onCreateFolderClick: (() -> Unit)? = null,
     scrollBehavior: TopAppBarScrollBehavior? = null
 ) {
+    val haptic = LocalHapticFeedback.current
+
     TopAppBar(
-        title = { Text(text = title) },
+        title = { 
+            // 🌟 SMART TITLE: Title can be empty if needed by caller
+            if (title.isNotEmpty()) {
+                Text(text = title) 
+            }
+        },
+        navigationIcon = {
+            if (navigationIcon != null && onBackClick != null) {
+                IconButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onBackClick()
+                }) {
+                    Icon(imageVector = navigationIcon, contentDescription = "Exit")
+                }
+            }
+        },
         actions = {
-            // 🌟 SMOOTH ANIMATED ICONS: Sliding and Fading
             AnimatedVisibility(
                 visible = showSearch && onSearchClick != null,
                 enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
@@ -82,11 +101,11 @@ fun UniversalTopBar(
         windowInsets = TopAppBarDefaults.windowInsets,
         scrollBehavior = scrollBehavior,
         colors = TopAppBarDefaults.topAppBarColors(
-            // 🌟 PRO FIX: 100% Sheesha! Ab color parent Column se aayega.
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent,
             titleContentColor = MaterialTheme.colorScheme.onBackground,
-            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
         )
     )
 }

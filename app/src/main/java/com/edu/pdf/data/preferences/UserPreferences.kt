@@ -25,6 +25,13 @@ class UserPreferences @Inject constructor(
         val IS_FOLDER_GRID_VIEW = booleanPreferencesKey("is_folder_grid_view")
         val LAST_SYNC_TIME = longPreferencesKey("last_sync_time")
         val IS_INITIAL_SCAN_COMPLETED = booleanPreferencesKey("is_initial_scan_completed")
+        private val IS_SYNC_LOCKED = booleanPreferencesKey("is_sync_locked") // 🌟 NAYA
+    }
+
+    val isSyncLockedFlow: Flow<Boolean> = dataStore.data.map { it[IS_SYNC_LOCKED] ?: false }
+
+    suspend fun setSyncLocked(locked: Boolean) {
+        dataStore.edit { it[IS_SYNC_LOCKED] = locked }
     }
 
     val isGridViewFlow: Flow<Boolean> = dataStore.data.map { it[IS_GRID_VIEW] ?: false }

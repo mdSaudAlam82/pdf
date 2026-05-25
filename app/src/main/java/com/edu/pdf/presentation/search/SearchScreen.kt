@@ -7,20 +7,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,33 +15,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,14 +40,16 @@ import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import com.airbnb.lottie.compose.LottieAnimation
-import com.airbnb.lottie.compose.LottieCompositionSpec
-import com.airbnb.lottie.compose.LottieConstants
-import com.airbnb.lottie.compose.rememberLottieComposition
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.composable
+import com.airbnb.lottie.compose.*
+import com.airbnb.lottie.RenderMode
 import com.edu.pdf.R
 import com.edu.pdf.domain.model.PdfFile
 import com.edu.pdf.presentation.common.PdfActionBottomSheet
 import com.edu.pdf.presentation.home.components.PdfThumbnail
+import com.edu.pdf.presentation.navigation.Screen
 import com.edu.pdf.presentation.search.components.HighlightedText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -101,20 +67,16 @@ fun SearchScreen(
 
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    // 🌟 MOVE PICKER STATE
     var showMovePickerByPdf by remember { mutableStateOf<PdfFile?>(null) }
 
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     var selectedPdfForMenu by remember { mutableStateOf<PdfFile?>(null) }
-
-    // 🌟 NAYA LOCAL STATE: Search screen me rename dialog open karne ke liye
     var renameDialogPdf by remember { mutableStateOf<PdfFile?>(null) }
 
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-    // 🌟 MVI FIX: ViewModel के Events को सुनना
     LaunchedEffect(viewModel.events, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
             viewModel.events.collect { event ->
@@ -127,9 +89,7 @@ fun SearchScreen(
         }
     }
 
-
     LaunchedEffect(Unit) {
-        androidx.compose.runtime.withFrameNanos { }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
@@ -139,7 +99,7 @@ fun SearchScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .imePadding() // 🌟 ELITE FIX: Keyboard aate hi list smoothly upar shift ho jayegi
+                .imePadding()
         ) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -157,9 +117,9 @@ fun SearchScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface)
                     }
                     TextField(
-                        value = query, // 🌟 MVI FIX: सीधा ViewModel का स्टेट इस्तेमाल कर रहे हैं
+                        value = query,
                         onValueChange = { newValue ->
-                            viewModel.onAction(SearchAction.OnQueryChange(newValue)) // 🌟 newValue अब सीधे String है
+                            viewModel.onAction(SearchAction.OnQueryChange(newValue))
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -175,11 +135,11 @@ fun SearchScreen(
                         ),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            viewModel.onAction(SearchAction.SaveSearchQuery(query)) // 🌟 MVI FIX
+                            viewModel.onAction(SearchAction.SaveSearchQuery(query))
                             keyboardController?.hide()
                         }),
                         trailingIcon = {
-                            if (query.isNotEmpty()) { // 🌟 MVI FIX
+                            if (query.isNotEmpty()) {
                                 IconButton(onClick = {
                                     viewModel.onAction(SearchAction.ClearSearch)
                                     focusRequester.requestFocus()
@@ -236,7 +196,6 @@ fun SearchScreen(
                 onDismiss = { selectedPdfForMenu = null },
                 onFavoriteToggle = {
                     viewModel.onAction(SearchAction.ToggleFavorite(pdf))
-                    Toast.makeText(context, if (pdf.isFavorite) "Removed from Favorites" else "Added to Favorites", Toast.LENGTH_SHORT).show()
                     selectedPdfForMenu = null
                 },
                 onShare = {
@@ -249,13 +208,11 @@ fun SearchScreen(
                     selectedPdfForMenu = null
                 },
                 onDelete = {
-                    // 🌟 MVI FIX: सीधा डिलीट मत करो, पहले कन्फर्मेशन पॉप-अप खोलो
                     viewModel.onAction(SearchAction.ShowDeleteConfirmation(pdf))
                     selectedPdfForMenu = null
                 },
                 onActionClick = { actionTitle ->
                     when (actionTitle) {
-                        // 🌟 EXACT FIX: Rename properly wire kar diya!
                         "Rename" -> {
                             renameDialogPdf = pdf
                             selectedPdfForMenu = null
@@ -269,7 +226,7 @@ fun SearchScreen(
                             selectedPdfForMenu = null
                         }
                         else -> {
-                            Toast.makeText(context, "Feature coming soon!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Coming soon!", Toast.LENGTH_SHORT).show()
                             selectedPdfForMenu = null
                         }
                     }
@@ -277,7 +234,6 @@ fun SearchScreen(
             )
         }
 
-        // 🌟 MOVE PICKER DIALOG
         val movePdf = showMovePickerByPdf
         if (movePdf != null) {
             com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
@@ -288,13 +244,10 @@ fun SearchScreen(
             )
         }
 
-        // Smart Rename Dialog for Search Screen
         val pdfToRename = renameDialogPdf
         if (pdfToRename != null) {
             val focusRequesterDialog = remember { FocusRequester() }
             val baseName = pdfToRename.name.removeSuffix(".pdf").removeSuffix(".PDF")
-
-            // Flag to ensure focus is requested only once
             var hasRequestedFocus by remember { mutableStateOf(false) }
 
             var renameTextFieldValue by remember {
@@ -341,7 +294,6 @@ fun SearchScreen(
                         onClick = {
                             keyboardController?.hide()
                             if (renameTextFieldValue.text.isNotBlank()) {
-                                // 🌟 MVI FIX: सिर्फ Action भेजो और डायलॉग बंद कर दो
                                 viewModel.onAction(SearchAction.RenamePdf(pdfToRename, renameTextFieldValue.text))
                                 renameDialogPdf = null
                             }
@@ -352,9 +304,8 @@ fun SearchScreen(
                     TextButton(onClick = { renameDialogPdf = null }) { Text("Cancel") }
                 }
             )
-
         }
-        // 🌟 MVI FIX: Delete Confirmation Dialog
+
         val pdfToDelete = uiState.pdfToDelete
         if (pdfToDelete != null) {
             AlertDialog(
@@ -396,12 +347,10 @@ fun ZeroStateView(
         modifier = Modifier.fillMaxSize().padding(top = 8.dp),
         contentPadding = PaddingValues(bottom = 80.dp)
     ) {
-        // 1. Premium Search Tips
         item {
             SmartSearchTipsCard()
         }
 
-        // 2. History Header
         if (history.isNotEmpty()) {
             item {
                 Row(
@@ -424,7 +373,6 @@ fun ZeroStateView(
                 }
             }
 
-            // 3. Expandable History List
             item {
                 Column(
                     modifier = Modifier
@@ -450,7 +398,6 @@ fun ZeroStateView(
                         }
                     }
 
-                    // 4. Show All Toggle Button
                     if (history.size > 3) {
                         Row(
                             modifier = Modifier
@@ -481,7 +428,6 @@ fun ZeroStateView(
     }
 }
 
-// 🌟 FIX: Premium UX Educational Element Rewrite
 @Composable
 private fun SmartSearchTipsCard() {
     Surface(
@@ -547,7 +493,7 @@ fun EmptyStateView(query: String) {
             LottieAnimation(
                 composition = composition,
                 iterations = LottieConstants.IterateForever,
-                renderMode = com.airbnb.lottie.RenderMode.HARDWARE,
+                renderMode = RenderMode.HARDWARE,
                 modifier = Modifier.size(200.dp)
             )
             Spacer(modifier = Modifier.height(16.dp))
@@ -556,5 +502,19 @@ fun EmptyStateView(query: String) {
             Spacer(modifier = Modifier.height(8.dp))
             Text("Check for typos or try a different word.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
+    }
+}
+
+// 🌟 THE 2026 NAVIGATION ENGINE: Search Section
+fun NavGraphBuilder.searchSection(
+    navController: NavHostController
+) {
+    composable<Screen.Search> {
+        SearchScreen(
+            onBackClick = { navController.popBackStack() },
+            onPdfClick = { path ->
+                navController.navigate(Screen.PdfViewer(pdfPath = path))
+            }
+        )
     }
 }

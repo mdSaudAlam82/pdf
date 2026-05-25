@@ -5,16 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,25 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.rounded.Bluetooth
-import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material.icons.rounded.Description
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.Movie
-import androidx.compose.material.icons.rounded.PhotoCamera
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,12 +32,16 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavHostController
+import com.edu.pdf.presentation.common.PremiumBottomBar
 import com.edu.pdf.presentation.common.UniversalTopBar
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FoldersScreen(
+    navController: NavHostController, // 🌟 NAYA
+    isTablet: Boolean, // 🌟 NAYA
     onFolderClick: (String, String) -> Unit,
     viewModel: FoldersViewModel = hiltViewModel()
 ) {
@@ -96,18 +75,17 @@ fun FoldersScreen(
 
     Scaffold(
         topBar = { UniversalTopBar(title = "Device Folders", scrollBehavior = scrollBehavior) },
-        containerColor = MaterialTheme.colorScheme.background
+        bottomBar = { if (!isTablet) PremiumBottomBar(navController) }, // 🌟 RESTORED
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0.dp)
     ) { padding ->
 
-        // 🌟 EXACT FIX: Humne 'padding' ko tod diya hai!
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                // 🌟 Sirf Top bar ki padding li, bottom ki padding HATA di! (Edge-to-Edge)
-                .padding(top = padding.calculateTopPadding())
+                .padding(padding)
         ) {
 
-            // 🌟 1. FIXED VAULT CARD
             PremiumVaultCard(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -119,12 +97,8 @@ fun FoldersScreen(
                 }
             )
 
-            // 🌟 2. SCROLLING FOLDERS
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                // 🌟 PERFECT NATIVE FEEL: Ab list ekdum screen ke aakhri chhor (edge) tak jayegi.
-                // Aakhri folder navigation bar ke piche na chhupe, isliye sirf bottom mein system bar jitni jagah di hai.
-                contentPadding = PaddingValues(bottom = padding.calculateBottomPadding())
+                modifier = Modifier.fillMaxSize()
             ) {
                 items(folders) { folder ->
                     PhysicalFolderItem(
@@ -211,19 +185,19 @@ fun rememberSmartFolderConfig(folderName: String): SmartFolderConfig {
     return remember(folderName) {
         val name = folderName.lowercase()
         when {
-            name.contains("whatsapp") -> SmartFolderConfig(Icons.Rounded.ChatBubbleOutline, Color(0xFF25D366)) // WhatsApp Green
-            name.contains("telegram") -> SmartFolderConfig(Icons.AutoMirrored.Rounded.Send, Color(0xFF0088CC)) // Telegram Blue
-            name.contains("download") -> SmartFolderConfig(Icons.Rounded.Download, Color(0xFF2196F3)) // System Blue
+            name.contains("whatsapp") -> SmartFolderConfig(Icons.Rounded.ChatBubbleOutline, Color(0xFF25D366))
+            name.contains("telegram") -> SmartFolderConfig(Icons.AutoMirrored.Rounded.Send, Color(0xFF0088CC))
+            name.contains("download") -> SmartFolderConfig(Icons.Rounded.Download, Color(0xFF2196F3))
             name.contains("dcim") || name.contains("camera") || name.contains("picture") || name.contains("screenshot") ->
-                SmartFolderConfig(Icons.Rounded.PhotoCamera, Color(0xFFE91E63)) // Gallery Pink/Purple
-            name.contains("document") -> SmartFolderConfig(Icons.Rounded.Description, Color(0xFFFF9800)) // Docs Orange
-            name.contains("bluetooth") || name.contains("share") -> SmartFolderConfig(Icons.Rounded.Bluetooth, Color(0xFF3F51B5)) // Bluetooth Indigo
-            name.contains("movie") || name.contains("video") -> SmartFolderConfig(Icons.Rounded.Movie, Color(0xFFF44336)) // Video Red
-            else -> SmartFolderConfig(Icons.Rounded.Folder, defaultFolderColor) // 🌟 Standard Free-Form Theme Color
+                SmartFolderConfig(Icons.Rounded.PhotoCamera, Color(0xFFE91E63))
+            name.contains("document") -> SmartFolderConfig(Icons.Rounded.Description, Color(0xFFFF9800))
+            name.contains("bluetooth") || name.contains("share") -> SmartFolderConfig(Icons.Rounded.Bluetooth, Color(0xFF3F51B5))
+            name.contains("movie") || name.contains("video") -> SmartFolderConfig(Icons.Rounded.Movie, Color(0xFFF44336))
+            else -> SmartFolderConfig(Icons.Rounded.Folder, defaultFolderColor)
         }
     }
 }
-// ✅ YAHAN PASTE KAREIN
+
 @Composable
 fun PhysicalFolderItem(folderName: String, pdfCount: Int, onClick: () -> Unit) {
     val smartConfig = rememberSmartFolderConfig(folderName)

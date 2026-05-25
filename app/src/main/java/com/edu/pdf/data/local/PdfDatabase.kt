@@ -16,7 +16,7 @@ import com.edu.pdf.data.local.entity.SearchHistoryEntity
         PdfFtsEntity::class,
         FolderEntity::class
     ],
-    version = 10, // 🌟 NAYA: Bumped from 9 to 10
+    version = 11, // 🌟 NAYA: Bumped from 10 to 11
     exportSchema = true
 )
 abstract class PdfDatabase : RoomDatabase() {

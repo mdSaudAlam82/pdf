@@ -163,8 +163,10 @@ class PdfViewerViewModel @Inject constructor(
                 viewModelScope.launch {
                     val currentPdf = _uiState.value.pdfFile ?: return@launch
                     val result = moveItemsUseCase(
-                        items = listOf(com.edu.pdf.domain.model.HomeItem.PdfItem(currentPdf)),
+                        selectedIds = setOf(currentPdf.id),
+                        folderIds = emptyList(),
                         targetFolderId = action.targetFolderId,
+                        sourcePath = currentPdf.virtualParentId, // 🌟 Save the parent
                         isVault = false
                     )
                     if (result.isSuccess) {

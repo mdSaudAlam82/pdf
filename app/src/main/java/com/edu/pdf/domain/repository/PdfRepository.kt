@@ -6,7 +6,6 @@ import com.edu.pdf.domain.model.SortType
 import kotlinx.coroutines.flow.Flow
 
 interface PdfRepository {
-    // 🌟 ELITE FIX: Ab parameters IDs nahi, balki Paths hain
     fun getManagedFolders(parentPath: String?, isVault: Boolean = false): Flow<List<Folder>>
     fun getAllManagedFolders(isVault: Boolean = false): Flow<List<Folder>>
     fun getManagedPdfs(parentPath: String?, isVault: Boolean = false): Flow<List<PdfFile>>
@@ -15,16 +14,15 @@ interface PdfRepository {
     suspend fun renameManagedFolder(oldPath: String, newName: String): Result<Unit>
     suspend fun deleteManagedFolder(path: String): Result<Unit>
 
-    suspend fun importPdfFromUri(uriString: String, targetPath: String?, isVault: Boolean, isPhysicalFolder: Boolean = false): Result<Unit>
+    suspend fun importPdfFromUri(uriString: String, targetPath: String?, isVault: Boolean = false, isPhysicalFolder: Boolean = false): Result<Unit>
     suspend fun movePdfsToVirtualFolder(pdfIds: List<String>, targetPath: String?, isVault: Boolean): Int
     suspend fun moveFolderToVirtualFolder(folderPath: String, targetPath: String?, isVault: Boolean): Result<Unit>
 
     fun getRecentPdfs(): Flow<List<PdfFile>>
-
+    
     fun getUncategorizedPdfs(sortType: SortType): Flow<List<PdfFile>>
     fun getAllPdfs(sortType: SortType): Flow<List<PdfFile>>
 
-    // 🌟 THE ELITE FIX: Home Screen Paging Support
     fun getAllPdfsPaged(sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
     fun getFavoritePdfs(sortType: SortType): Flow<List<PdfFile>>
     fun searchPdfs(query: String): Flow<List<PdfFile>>
@@ -46,7 +44,6 @@ interface PdfRepository {
     fun getSecureVaultStreamUri(encryptedPath: String): String
 
     fun getPdfsInPhysicalFolder(folderPath: String): Flow<List<PdfFile>>
-    // इन दोनों को पुराने वाले से REPLACE कर दें
     fun getPaginatedPdfsInPhysicalFolder(folderPath: String, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
 
     fun getPaginatedManagedPdfs(parentPath: String?, isVault: Boolean = false, sortType: SortType): Flow<androidx.paging.PagingData<PdfFile>>
@@ -56,4 +53,6 @@ interface PdfRepository {
     suspend fun getManagedPdfIdsFast(parentPath: String?, isVault: Boolean): List<String>
     suspend fun getPhysicalFolderPdfIdsFast(folderPath: String): List<String>
 
+    suspend fun markPdfsForWorker(pdfIds: List<String>, batchId: Long)
+    suspend fun getPdfsForWorkerBatch(batchId: Long): List<PdfFile>
 }

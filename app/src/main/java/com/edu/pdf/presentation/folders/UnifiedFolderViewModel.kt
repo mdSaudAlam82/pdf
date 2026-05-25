@@ -67,6 +67,7 @@ sealed interface UnifiedFolderAction {
 
 data class UnifiedFolderUiState(
     val isLoading: Boolean = true,
+    val isDataLoaded: Boolean = false, // 🌟 NAYA: To prevent flickering
     val isProcessing: Boolean = false,
     val folderType: FolderType = FolderType.PHYSICAL_DEVICE,
     val folderId: String = "",
@@ -197,6 +198,7 @@ class UnifiedFolderViewModel @Inject constructor(
 
         internal.copy(
             isLoading = false,
+            isDataLoaded = true, // 🌟 DB se data aa gaya, ab gate kholo
             folders = dbData.folders,
             breadcrumbs = dbData.breadcrumbs,
             foldersTree = dbData.tree.toImmutableList(),
@@ -221,9 +223,12 @@ class UnifiedFolderViewModel @Inject constructor(
             is UnifiedFolderAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
             is UnifiedFolderAction.SelectAllItems -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    val folderIds = uiState.value.folders.map { it.folder.folderId }
                     val type = _currentFolderType.value
                     val id = _currentFolderId.value
+
+                    // 🌟 2026 PRO: Full ID fetch from Database
+                    val folderIds = if (type == FolderType.PHYSICAL_DEVICE) emptyList() 
+                                   else repository.getManagedFolders(id, isVault = type == FolderType.SECURE_VAULT).first().map { it.folderId }
 
                     val pdfIds = if (type == FolderType.PHYSICAL_DEVICE) {
                         repository.getPhysicalFolderPdfIdsFast(id ?: "")
@@ -302,11 +307,33 @@ class UnifiedFolderViewModel @Inject constructor(
                 }
             }
             is UnifiedFolderAction.ConfirmMove -> {
-                val state = _internalState.value.activeSheetState as? UnifiedFolderSheetState.MovePicker ?: return
-                _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
+                if (_internalState.value.activeSheetState !is UnifiedFolderSheetState.MovePicker) return
+                
+                val currentSelected = _internalState.value.selectedIds
+                
+                _internalState.update { 
+                    it.copy(
+                        isProcessing = true, 
+                        activeSheetState = UnifiedFolderSheetState.None,
+                        isSelectionMode = false,
+                        selectedIds = persistentSetOf()
+                    ) 
+                }
+
                 viewModelScope.launch(Dispatchers.IO) {
-                    moveItemsUseCase(state.items, action.targetFolderId, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
-                    withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ClearMultiSelection) }
+                    val pdfIds = currentSelected.filter { !it.startsWith("/") }.toSet()
+                    val folderIds = currentSelected.filter { it.startsWith("/") }.toList()
+
+                    moveItemsUseCase(
+                        selectedIds = pdfIds,
+                        folderIds = folderIds,
+                        targetFolderId = action.targetFolderId,
+                        sourcePath = _currentFolderId.value,
+                        isVault = _currentFolderType.value == FolderType.SECURE_VAULT
+                    )
+                    withContext(Dispatchers.Main) {
+                        _internalState.update { it.copy(isProcessing = false) }
+                    }
                 }
             }
             is UnifiedFolderAction.ImportFile -> {
@@ -321,9 +348,18 @@ class UnifiedFolderViewModel @Inject constructor(
             is UnifiedFolderAction.MovePdfsToCurrentFolder -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = UnifiedFolderSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val items = action.pdfIds.map { id -> HomeItem.PdfItem(com.edu.pdf.domain.model.PdfFile(id = id, name = "", path = "", sizeInBytes = 0, lastModified = 0)) }
-                    moveItemsUseCase(items, _currentFolderId.value, isVault = _currentFolderType.value == FolderType.SECURE_VAULT)
-                    withContext(Dispatchers.Main) { _internalState.update { it.copy(isProcessing = false) }; _events.send(UnifiedFolderEvent.ShowSnackbar("Added successfully!")) }
+                    // 🌟 2026 PRO: Use IDs directly
+                    moveItemsUseCase(
+                        selectedIds = action.pdfIds.toSet(),
+                        folderIds = emptyList(),
+                        targetFolderId = _currentFolderId.value,
+                        sourcePath = _currentFolderId.value, // 🌟 Stay here
+                        isVault = _currentFolderType.value == FolderType.SECURE_VAULT
+                    )
+                    withContext(Dispatchers.Main) { 
+                        _internalState.update { it.copy(isProcessing = false) }
+                        _events.send(UnifiedFolderEvent.ShowSnackbar("Added successfully!")) 
+                    }
                 }
             }
             is UnifiedFolderAction.ToggleVaultStatus -> {

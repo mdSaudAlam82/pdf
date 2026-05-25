@@ -7,6 +7,7 @@ import com.google.ai.client.generativeai.GenerativeModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -36,16 +37,17 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
-    val state = _state.asStateFlow()
+    val state: StateFlow<SettingsUiState> = _state.asStateFlow()
 
     init {
-        val savedKeys = keyManager.getKeys()
-        _state.update {
-            it.copy(
-                primaryKey = savedKeys.getOrNull(0) ?: "",
-                fallbackKey1 = savedKeys.getOrNull(1) ?: "",
-                fallbackKey2 = savedKeys.getOrNull(2) ?: ""
-            )
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    primaryKey = keyManager.getPrimaryKey() ?: "",
+                    fallbackKey1 = keyManager.getFallbackKey1() ?: "",
+                    fallbackKey2 = keyManager.getFallbackKey2() ?: ""
+                )
+            }
         }
     }
 
@@ -54,14 +56,13 @@ class SettingsViewModel @Inject constructor(
             is SettingsAction.UpdatePrimaryKey -> _state.update { it.copy(primaryKey = action.key) }
             is SettingsAction.UpdateFallback1 -> _state.update { it.copy(fallbackKey1 = action.key) }
             is SettingsAction.UpdateFallback2 -> _state.update { it.copy(fallbackKey2 = action.key) }
-            is SettingsAction.ClearMessage -> _state.update { it.copy(validationMessage = null) }
-            is SettingsAction.SaveAndVerifyKeys -> verifyAndSave()
+            SettingsAction.SaveAndVerifyKeys -> verifyAndSave()
+            SettingsAction.ClearMessage -> _state.update { it.copy(validationMessage = null) }
         }
     }
 
     private fun verifyAndSave() {
         val currentState = _state.value
-        // 🌟 FIX 1: Hamesha trim() use karo taaki copy-paste ke hidden spaces hat jayein
         val primaryKeyTrimmed = currentState.primaryKey.trim()
 
         if (primaryKeyTrimmed.isBlank()) {
@@ -72,19 +73,18 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(isVerifying = true, validationMessage = null) }
 
         viewModelScope.launch {
-            // Hum boolean (true/false) ke bajaye String result lenge taaki error padh sakein
+            // 🌟 2026 ELITE VERIFICATION: Real Handshake with Google Gemini
             val resultMessage = withContext(Dispatchers.IO) {
                 try {
                     val model = GenerativeModel(
-                        modelName = "gemini-2.5-flash",
+                        modelName = "gemini-1.5-flash",
                         apiKey = primaryKeyTrimmed
                     )
-                    // "ping" ki jagah "Hello" bhejo, kabhi-kabhi too-short prompts block ho jate hain
-                    model.generateContent("Hello")
+                    // Ping check
+                    model.generateContent("Say 'Verified'")
                     "SUCCESS"
                 } catch (e: Exception) {
-                    // 🌟 FIX 2: Asli exception ka message pakdo taaki UI par dikha sakein
-                    e.localizedMessage ?: "Unknown Network Error"
+                    e.localizedMessage ?: "Network error. Check connection."
                 }
             }
 
@@ -98,16 +98,15 @@ class SettingsViewModel @Inject constructor(
                     it.copy(
                         isVerifying = false,
                         isSuccess = true,
-                        validationMessage = "AI Keys Verified & Secured! ✅"
+                        validationMessage = "AI Engine Active & Secured! ✅"
                     )
                 }
             } else {
-                // Yahan tumhe sachai pata chalegi ki aakhir API key kyu nahi le raha tha!
                 _state.update {
                     it.copy(
                         isVerifying = false,
                         isSuccess = false,
-                        validationMessage = "Failed: $resultMessage ❌"
+                        validationMessage = "Validation Failed: $resultMessage"
                     )
                 }
             }

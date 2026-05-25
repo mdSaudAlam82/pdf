@@ -1,4 +1,4 @@
-@file:Suppress("DEPRECATION") // 🌟 ELITE FIX 1: File-level par warning suppress ki taaki poori file clean ho jaye
+@file:Suppress("DEPRECATION")
 
 package com.edu.pdf.data.preferences
 
@@ -13,7 +13,6 @@ import javax.inject.Singleton
 class AiKeyManager @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) {
-    // 🌟 2026 STABLE CONFIG: Using the safest scheme for Android KeyStore
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
@@ -35,13 +34,15 @@ class AiKeyManager @Inject constructor(
         }
     }
 
+    fun getPrimaryKey(): String? = sharedPreferences.getString("KEY_PRIMARY", null)
+    fun getFallbackKey1(): String? = sharedPreferences.getString("KEY_FALLBACK_1", null)
+    fun getFallbackKey2(): String? = sharedPreferences.getString("KEY_FALLBACK_2", null)
+
     fun getKeys(): List<String> {
         val keys = mutableListOf<String>()
-        sharedPreferences.getString("KEY_PRIMARY", "")?.takeIf { it.isNotEmpty() }?.let { keys.add(it) }
-        sharedPreferences.getString("KEY_FALLBACK_1", "")?.takeIf { it.isNotEmpty() }?.let { keys.add(it) }
-        sharedPreferences.getString("KEY_FALLBACK_2", "")?.takeIf { it.isNotEmpty() }?.let { keys.add(it) }
+        getPrimaryKey()?.takeIf { it.isNotEmpty() }?.let { keys.add(it) }
+        getFallbackKey1()?.takeIf { it.isNotEmpty() }?.let { keys.add(it) }
+        getFallbackKey2()?.takeIf { it.isNotEmpty() }?.let { keys.add(it) }
         return keys
     }
-
-    // 🌟 ELITE FIX 2: hasAnyKey() function ko hata diya gaya hai kyunki wo "Dead Code" tha
 }

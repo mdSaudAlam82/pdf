@@ -3,12 +3,7 @@ package com.edu.pdf.worker
 import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
-import androidx.work.Constraints
-import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.WorkerParameters
+import androidx.work.*
 import com.edu.pdf.domain.model.SortType
 import com.edu.pdf.domain.repository.PdfRepository
 import com.edu.pdf.notification.PdfNotificationHelper
@@ -30,7 +25,6 @@ class PdfDetectionWorker @AssistedInject constructor(
             // 1. Scan the device for new PDFs
             repository.scanAndSavePdfs()
 
-
             val latestPdfs = repository.getAllPdfs(SortType.DATE_DESC).first().take(10)
             val nowSeconds = System.currentTimeMillis() / 1000
             
@@ -40,6 +34,7 @@ class PdfDetectionWorker @AssistedInject constructor(
                 val ageSeconds = nowSeconds - pdf.lastModified
                 Log.d("PdfDetectionWorker", "Analyzing: ${pdf.name}, Age: ${ageSeconds}s")
 
+                // 🌟 Standard Notification Logic
                 if (ageSeconds in 0..<60) {
                     Log.d("PdfDetectionWorker", "NOTIFYING: ${pdf.name}")
                     notificationHelper.showNewPdfNotification(pdf.name, pdf.path)
@@ -65,10 +60,9 @@ class PdfDetectionWorker @AssistedInject constructor(
 
             WorkManager.getInstance(context).enqueueUniqueWork(
                 "PdfDetectionWork",
-                ExistingWorkPolicy.KEEP, // 🌟 Changed to KEEP to allow parallel triggers
+                ExistingWorkPolicy.KEEP,
                 request
             )
         }
-
     }
 }

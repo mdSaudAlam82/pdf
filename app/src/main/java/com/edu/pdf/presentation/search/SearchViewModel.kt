@@ -135,7 +135,13 @@ class SearchViewModel @Inject constructor(
                 }
             }
             is SearchAction.MoveToFolder -> viewModelScope.launch {
-                val result = moveItemsUseCase(listOf(com.edu.pdf.domain.model.HomeItem.PdfItem(action.pdf)), action.targetFolderId, false)
+                val result = moveItemsUseCase(
+                    selectedIds = setOf(action.pdf.id),
+                    folderIds = emptyList(),
+                    targetFolderId = action.targetFolderId,
+                    sourcePath = null, // Search results can stay in search
+                    isVault = false
+                )
                 if (result.isSuccess) _events.send(SearchEvent.ShowSnackbar("Moved successfully"))
             }
             is SearchAction.ToggleVaultStatus -> viewModelScope.launch {

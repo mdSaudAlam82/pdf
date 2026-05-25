@@ -13,35 +13,12 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CenterFocusWeak
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorMatrix
@@ -58,8 +35,13 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.composable
+import androidx.navigation.toRoute
 import androidx.pdf.viewer.fragment.PdfViewerFragment
 import com.edu.pdf.presentation.common.PdfActionBottomSheet
+import com.edu.pdf.presentation.navigation.Screen
 import com.edu.pdf.presentation.pdfviewer.ai.AiChatOverlayScreen
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrAction
 import com.edu.pdf.presentation.pdfviewer.ocr.OcrSelectionOverlay
@@ -83,10 +65,7 @@ fun PdfViewerScreen(
     var currentCapturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var showActionSheet by remember { mutableStateOf(false) }
 
-    // 🌟 MOVE PICKER STATE
     var showMovePicker by remember { mutableStateOf(false) }
-
-    // 🌟 RENAME DIALOG STATE
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameInput by remember { mutableStateOf("") }
 
@@ -97,9 +76,7 @@ fun PdfViewerScreen(
     val scope = rememberCoroutineScope()
     var tapJob by remember { mutableStateOf<Job?>(null) }
     val doubleTapTimeout = remember { ViewConfiguration.getDoubleTapTimeout().toLong() }
-    LocalFocusManager.current
 
-    // 🌟 EVENT HANDLING (Back and Toasts)
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -150,12 +127,7 @@ fun PdfViewerScreen(
     )) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // 🌟 MAIN BOX (Yahin par saari layers ek ke upar ek aayengi)
         Box(modifier = Modifier.fillMaxSize()) {
-
-            // ==========================================
-            // LAYER 1: BASE (PDF VIEWER & TOP BAR)
-            // ==========================================
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -195,7 +167,6 @@ fun PdfViewerScreen(
                             )
                         }
 
-                        // OCR Scanner Button
                         IconButton(
                             onClick = {
                                 captureScreenNonBlocking(activity) { bitmap ->
@@ -206,7 +177,6 @@ fun PdfViewerScreen(
                             Icon(Icons.Default.CenterFocusWeak, contentDescription = "Scan Text", tint = MaterialTheme.colorScheme.onSurface)
                         }
 
-                        // 🌟 ELITE 2026 FIX: AI Button moved to Top Bar
                         IconButton(
                             onClick = {
                                 captureScreenNonBlocking(activity) { bitmap ->
@@ -218,7 +188,7 @@ fun PdfViewerScreen(
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
                                 contentDescription = "Ask AI",
-                                tint = MaterialTheme.colorScheme.primary // Premium Brand Red/Blue Color
+                                tint = MaterialTheme.colorScheme.primary
                             )
                         }
 
@@ -276,14 +246,9 @@ fun PdfViewerScreen(
                         )
                  {
                     if (pdfUri != null) {
-                        // 🌟 ELITE 2026 ROADMAP FIX: Built with hybrid view support
-                        // Built with hybrid view support for Native PDF Tools
-                        // Built with hybrid view support for Native PDF Tools
                         androidx.compose.ui.viewinterop.AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { _ ->
-                                // ELITE FIX 1: The Absolute Bulletproof Method using pure Android System Theme.
-                                // No Material or AppCompat dependencies needed here!
                                 val themedContext = androidx.appcompat.view.ContextThemeWrapper(
                                     activity,
                                     android.R.style.Theme_DeviceDefault_NoActionBar
@@ -324,7 +289,6 @@ fun PdfViewerScreen(
 
                                 if (uiState.isNightMode) {
                                     val paint = android.graphics.Paint().apply {
-                                        // ELITE FIX 2: Using values to pass FloatArray correctly
                                         colorFilter = android.graphics.ColorMatrixColorFilter(darkColorMatrix.values)
                                     }
                                     view.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, paint)
@@ -346,32 +310,22 @@ fun PdfViewerScreen(
                 }
             }
 
-            // ==========================================
-            // LAYER 3: OCR OVERLAY
-            // ==========================================
             OcrSelectionOverlay(
                 state = ocrState,
                 onAction = { action -> ocrViewModel.onAction(action) }
             )
 
-            // ==========================================
-            // LAYER 4: GEMINI AI CHAT OVERLAY
-            // ==========================================
-            // Humara naya slide-up screen yahin khulega
             AiChatOverlayScreen(
                 isVisible = showAiChat,
                 currentPageBitmap = currentCapturedBitmap,
-                currentPageNumber = uiState.currentPageNumber, // PdfViewerViewModel mein add karo
-                pdfName = uiState.pdfFileName,                 // PdfViewerViewModel mein add karo
+                currentPageNumber = uiState.currentPageNumber,
+                pdfName = uiState.pdfFileName,
                 onDismiss = {
                     showAiChat = false
                     currentCapturedBitmap = null
                 }
             )
 
-            // ==========================================
-            // LAYER 5: PDF ACTION BOTTOM SHEET (FULL POWERED)
-            // ==========================================
             if (showActionSheet && uiState.pdfFile != null) {
                 PdfActionBottomSheet(
                     pdf = uiState.pdfFile!!,
@@ -431,10 +385,9 @@ fun PdfViewerScreen(
                 )
             }
 
-            // 🌟 MOVE PICKER DIALOG
             if (showMovePicker) {
                 com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
-                    folders = emptyList(), // ViewModel internally loads folders
+                    folders = emptyList(),
                     onDismiss = { showMovePicker = false },
                     onTargetSelected = { targetId ->
                         viewModel.onAction(PdfViewerAction.MoveToFolder(targetId))
@@ -442,7 +395,6 @@ fun PdfViewerScreen(
                 )
             }
 
-            // 🌟 RENAME DIALOG (FULL MVI)
             if (showRenameDialog) {
                 androidx.compose.material3.AlertDialog(
                     onDismissRequest = { showRenameDialog = false },
@@ -471,8 +423,28 @@ fun PdfViewerScreen(
                     }
                 )
             }
+        }
+    }
+}
 
-        } // Box End
+// 🌟 THE 2026 NAVIGATION ENGINE: PdfViewer Section
+fun NavGraphBuilder.pdfViewerSection(
+    navController: NavHostController,
+    isExternalLaunch: () -> Boolean,
+    onExternalClosed: () -> Unit
+) {
+    composable<Screen.PdfViewer> { backStackEntry ->
+        val route: Screen.PdfViewer = backStackEntry.toRoute()
+        PdfViewerScreen(
+            onBack = {
+                if (isExternalLaunch()) {
+                    onExternalClosed()
+                    navController.popBackStack()
+                } else {
+                    navController.popBackStack()
+                }
+            }
+        )
     }
 }
 

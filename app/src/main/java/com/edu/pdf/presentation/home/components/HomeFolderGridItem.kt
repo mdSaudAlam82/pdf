@@ -2,6 +2,7 @@ package com.edu.pdf.presentation.home.components
 
 import android.text.format.DateUtils
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -21,10 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.edu.pdf.R
 import com.edu.pdf.domain.model.Folder
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -45,7 +48,6 @@ fun HomeFolderGridItem(
         ).toString()
     }
 
-    // 🌟 Design matched EXACTLY with your PdfGridItem
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -62,9 +64,8 @@ fun HomeFolderGridItem(
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
             contentAlignment = Alignment.Center
         ) {
-            // 🌟 PREMIUM 3D FOLDER IMAGE
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(id = com.edu.pdf.R.drawable.premium_folder1),
+            Image(
+                painter = painterResource(id = R.drawable.premium_folder1),
                 contentDescription = "Folder",
                 modifier = Modifier.size(64.dp)
             )

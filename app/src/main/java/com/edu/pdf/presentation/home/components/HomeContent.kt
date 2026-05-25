@@ -162,9 +162,19 @@ fun HomeContent(
 fun UnifiedGridItem(item: HomeItem, isSelectionMode: Boolean, selectedPdfs: PersistentSet<String>, onAction: (HomeAction) -> Unit, onToggleSelection: (String) -> Unit, onLongPress: (String) -> Unit) {
     val isSelected = selectedPdfs.contains(item.id)
     when (item) {
-        is HomeItem.FolderItem -> HomeFolderGridItem(folder = item.folder, isSelectionMode = isSelectionMode, isSelected = isSelected, onClick = { if (isSelectionMode) onToggleSelection(item.id) else onAction(
-            HomeAction.NavigateToVirtualFolder(item.folder)) }, onLongClick = { onLongPress(item.id) }, onMoreOptionsClick = { onAction(
-            HomeAction.OpenSheet(HomeSheetState.ItemMenu(item))) })
+        is HomeItem.FolderItem -> HomeFolderGridItem(
+            folder = item.folder,
+            isSelectionMode = isSelectionMode,
+            isSelected = isSelected,
+            onClick = {
+                if (isSelectionMode) onToggleSelection(item.id)
+                else onAction(HomeAction.NavigateToVirtualFolder(item.folder))
+            },
+            onLongClick = { onLongPress(item.id) },
+            onMoreOptionsClick = {
+                onAction(HomeAction.OpenSheet(HomeSheetState.ItemMenu(item)))
+            }
+        )
         is HomeItem.PdfItem -> PdfGridItem(pdf = item.pdf, isSelectionMode = isSelectionMode, isSelected = isSelected, onClick = { if (isSelectionMode) onToggleSelection(item.id) else onAction(
             HomeAction.ValidateAndOpenPdf(item.pdf)) }, onLongClick = { onLongPress(item.id) }, onMoreOptionsClick = { onAction(
             HomeAction.OpenSheet(HomeSheetState.ItemMenu(item))) })
@@ -175,9 +185,19 @@ fun UnifiedGridItem(item: HomeItem, isSelectionMode: Boolean, selectedPdfs: Pers
 fun UnifiedListItem(item: HomeItem, isSelectionMode: Boolean, selectedPdfs: PersistentSet<String>, onAction: (HomeAction) -> Unit, onToggleSelection: (String) -> Unit, onLongPress: (String) -> Unit) {
     val isSelected = selectedPdfs.contains(item.id)
     when (item) {
-        is HomeItem.FolderItem -> HomeFolderListItem(folder = item.folder, isSelectionMode = isSelectionMode, isSelected = isSelected, onClick = { if (isSelectionMode) onToggleSelection(item.id) else onAction(
-            HomeAction.NavigateToVirtualFolder(item.folder)) }, onLongClick = { onLongPress(item.id) }, onMoreOptionsClick = { onAction(
-            HomeAction.OpenSheet(HomeSheetState.ItemMenu(item))) })
+        is HomeItem.FolderItem -> HomeFolderListItem(
+            folder = item.folder,
+            isSelectionMode = isSelectionMode,
+            isSelected = isSelected,
+            onClick = {
+                if (isSelectionMode) onToggleSelection(item.id)
+                else onAction(HomeAction.NavigateToVirtualFolder(item.folder))
+            },
+            onLongClick = { onLongPress(item.id) },
+            onMoreOptionsClick = {
+                onAction(HomeAction.OpenSheet(HomeSheetState.ItemMenu(item)))
+            }
+        )
         is HomeItem.PdfItem -> PdfListItem(pdf = item.pdf, isSelectionMode = isSelectionMode, isSelected = isSelected, onClick = { if (isSelectionMode) onToggleSelection(item.id) else onAction(
             HomeAction.ValidateAndOpenPdf(item.pdf)) }, onLongClick = { onLongPress(item.id) }, onMoreOptionsClick = { onAction(
             HomeAction.OpenSheet(HomeSheetState.ItemMenu(item))) })

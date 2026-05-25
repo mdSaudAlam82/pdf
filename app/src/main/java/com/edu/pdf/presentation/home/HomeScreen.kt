@@ -9,38 +9,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.material3.*
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -52,19 +27,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
+import androidx.navigation.compose.composable
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.HomeItem
-import com.edu.pdf.presentation.common.PremiumBottomBarItems
+import com.edu.pdf.presentation.common.PremiumBottomBar
+import com.edu.pdf.presentation.common.SmartSelectionBottomBar
 import com.edu.pdf.presentation.common.UniversalTopBar
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
+import com.edu.pdf.presentation.navigation.Screen
 import kotlinx.collections.immutable.PersistentSet
+import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Composable
@@ -89,14 +71,12 @@ fun HomeScreenWrapper(
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // 🌟 MVI STRICT EVENT OBSERVER: Ye background me crash nahi hone dega
     LaunchedEffect(viewModel.events, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             viewModel.events.collect { event ->
                 when (event) {
                     is HomeEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
                     is HomeEvent.NavigateToPdfViewer -> onPdfClick(event.path)
-                    // 🌟 2. NAYA EVENT LISTEN KIYA
                     is HomeEvent.NavigateToFolder -> onFolderClick(event.folderId, event.folderName, event.type)
                 }
             }
@@ -127,7 +107,6 @@ fun HomeScreenWrapper(
                 onToggleSelection = { id -> viewModel.onAction(HomeAction.ToggleSelection(id)) },
                 onSelectAll = { ids -> viewModel.onAction(HomeAction.SelectAll(ids)) },
                 onAction = viewModel::onAction
-
             )
             HomeOverlays(state = uiState, foldersTree = uiState.foldersTree, onAction = viewModel::onAction)
         }
@@ -141,7 +120,7 @@ fun HomeScreenPure(
     isRefreshing: Boolean,
     isSelectionMode: Boolean,
     selectedPdfs: PersistentSet<String>,
-    pagedPdfs: androidx.paging.compose.LazyPagingItems<HomeItem.PdfItem>, // 🌟 FIX: Ye line miss ho gayi thi
+    pagedPdfs: androidx.paging.compose.LazyPagingItems<HomeItem.PdfItem>,
     navController: NavHostController,
     onSearchClick: () -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
@@ -164,20 +143,18 @@ fun HomeScreenPure(
         currentTab = pagerState.currentPage
     }
 
-    // 🌟 FIX: Paging items aur Folders ko mix karke select karne ke liye
     val currentTabItems = remember(currentTab, state.recentItems, state.currentFolders, state.favoritePdfs, pagedPdfs.itemSnapshotList) {
         when (currentTab) {
             0 -> state.recentItems
             1 -> {
                 val pagedList = pagedPdfs.itemSnapshotList.items
-                state.currentFolders + pagedList // Folders aur PDFs dono aayenge
+                state.currentFolders + pagedList
             }
             2 -> state.favoritePdfs.map { HomeItem.PdfItem(it) }
             else -> emptyList()
         }
     }
 
-    // 🌟 EXACT FIX: Ab BackHandler sirf Selection Mode me kaam aayega!
     BackHandler(enabled = isSelectionMode) {
         onSelectAll(emptyList())
         onSelectionModeChange(false)
@@ -187,10 +164,10 @@ fun HomeScreenPure(
 
     Scaffold(
         modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
                 if (isSelectionMode) {
-                    // 🌟 STEP 1: Current Tab me total kitne items hain?
                     val currentTabTotalCount = when (currentTab) {
                         0 -> state.recentItems.size
                         1 -> state.currentFolders.size + pagedPdfs.itemCount
@@ -198,56 +175,37 @@ fun HomeScreenPure(
                         else -> 0
                     }
 
-                    // 🌟 STEP 2: Kya Current Tab ke saare items select ho chuke hain?
                     val isAllCurrentTabSelected = if (currentTabTotalCount == 0) false else {
                         if (currentTab == 1) {
-                            // Paging Mode: Agar selection size total se zyada/barabar hai, aur jo screen pe dikh rahe hain wo sab selected hain
                             selectedPdfs.size >= currentTabTotalCount && currentTabItems.all { it.id in selectedPdfs }
                         } else {
-                            // Memory Mode (Recent/Fav): Kya current tab ke saare ID selected map me hain?
                             val tabIds = currentTabItems.map { it.id }
                             selectedPdfs.containsAll(tabIds) && tabIds.isNotEmpty()
                         }
                     }
 
                     SelectionTopBar(
-                        selectedCount = selectedPdfs.size, // Hamesha total count dikhayega
-                        isAllSelected = isAllCurrentTabSelected, // Box RED hoga ya nahi?
-                        onClearSelection = {
-                            onSelectionModeChange(false)
-                        },
+                        selectedCount = selectedPdfs.size,
+                        isAllSelected = isAllCurrentTabSelected,
+                        onClearSelection = { onSelectionModeChange(false) },
                         onSelectAllToggle = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             if (isAllCurrentTabSelected) {
-                                // Agar sab select the, to click karne par sab Deselect kar do
                                 onSelectionModeChange(false)
                             } else {
-                                // NAYA ACTION: Sirf Current Tab ke items MVI ke zariye select karo
                                 onAction(HomeAction.SelectAllInTab(currentTab))
                             }
                         }
                     )
                 } else {
-                    // 🌟 SMART TOP BAR LOGIC
-                    val isRecentTab = currentTab == 0
-                    val isAllFilesTab = currentTab == 1
-                    val isFavTab = currentTab == 2
-
-                    val isEmpty = when (currentTab) {
-                        0 -> state.recentItems.isEmpty()
-                        1 -> state.currentFolders.isEmpty() && pagedPdfs.itemCount == 0
-                        2 -> state.favoritePdfs.isEmpty()
-                        else -> true
-                    }
-
                     UniversalTopBar(
                         title = "Hi Read",
                         isGridView = state.isGridView,
-                        showSearch = true, // Search hamesha dikhega
-                        showCreateFolder = isAllFilesTab, // New Folder sirf All Files me
-                        showSort = !isRecentTab && !isEmpty, // Sort Recent me nahi aur Empty me nahi
-                        showSelectAll = !isEmpty, // Kuch nahi hai to select kya karoge?
-                        showToggleView = !isEmpty, // Empty me List/Grid ki zaroorat nahi
+                        showSearch = true,
+                        showCreateFolder = currentTab == 1,
+                        showSort = currentTab != 0,
+                        showSelectAll = true,
+                        showToggleView = true,
                         onSelectAllClick = {
                             onSelectionModeChange(true)
                             onAction(HomeAction.SelectAllInTab(currentTab))
@@ -267,67 +225,48 @@ fun HomeScreenPure(
             }
         },
         bottomBar = {
-            if (isSelectionMode || !isTablet) {
-                androidx.compose.animation.AnimatedContent(
-                    targetState = isSelectionMode,
-                    label = "BottomBarSwapAnimation"
-                ) { selectionActive ->
-                    if (selectionActive) {
-                        val selectedIdsSet = remember(selectedPdfs) { selectedPdfs.toSet() }
-                        val selectedItemsList = remember(currentTabItems, selectedIdsSet) {
-                            if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet }
-                        }
-
-                        // 🌟 ELITE FIX: Hamara naya Master Bar! (No extra NavigationBar wrapper needed)
-                        com.edu.pdf.presentation.common.SmartSelectionBottomBar(
-                            selectedItems = selectedItemsList,
-                            tabIndex = currentTab,
-                            onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                            onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                            onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                            onShare = {
-                                val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                                if (pdfUris.isNotEmpty()) {
-                                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                        type = "application/pdf"
-                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                                }
-                            },
-                            onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                            onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                        )
-                    } else {
-                        if (!isTablet) {
-                            // 🌟 NORMAL APP BAR: Iske andar already height 72dp aur padding set hai
-                            Surface(
-                                color = MaterialTheme.colorScheme.surface,
-                                tonalElevation = 0.dp,
-                                modifier = Modifier.fillMaxWidth().navigationBarsPadding()
-                            ) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                                    PremiumBottomBarItems(navController = navController)
-                                }
-                            }
-                        }
+            // 🌟 PIXEL PERFECT SWAP: Only ONE bar exists at a time. No stacking.
+            if (!isTablet) {
+                if (isSelectionMode) {
+                    val selectedIdsSet = remember(selectedPdfs) { selectedPdfs.toSet() }
+                    val selectedItemsList = remember(currentTabItems, selectedIdsSet) {
+                        if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet }
                     }
+
+                    SmartSelectionBottomBar(
+                        selectedItems = selectedItemsList,
+                        tabIndex = currentTab,
+                        onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
+                        onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
+                        onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
+                        onShare = {
+                            val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
+                            if (pdfUris.isNotEmpty()) {
+                                val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                    type = "application/pdf"
+                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+                            }
+                        },
+                        onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
+                        onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
+                    )
+                } else {
+                    // Standard Navigation Bar
+                    PremiumBottomBar(navController = navController)
                 }
             }
         }
     ) { paddingValues ->
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
+        Row(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             HomeContent(
                 state = state,
                 isRefreshing = isRefreshing,
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
-                pagedPdfs = pagedPdfs, // 🌟 FIX: Ye pass karna zaroori hai
+                pagedPdfs = pagedPdfs,
                 paddingValues = PaddingValues(0.dp),
                 pagerState = pagerState,
                 onAction = onAction,
@@ -346,5 +285,33 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
         Text("To find and display all PDFs on your device, we need \"All Files Access\".", textAlign = TextAlign.Center, color = Color.Gray)
         Spacer(modifier = Modifier.height(24.dp))
         Button(onClick = onRequestPermission) { Text("Grant Permission") }
+    }
+}
+
+// 🌟 THE 2026 NAVIGATION ENGINE: Home Section
+fun NavGraphBuilder.homeSection(
+    navController: NavHostController,
+    isTablet: Boolean
+) {
+    composable<Screen.Home> {
+        HomeScreenWrapper(
+            viewModel = hiltViewModel(),
+            navController = navController,
+            onPdfClick = { path ->
+                navController.navigate(Screen.PdfViewer(pdfPath = path))
+            },
+            onFolderClick = { id, name, type ->
+                navController.navigate(
+                    Screen.UnifiedFolder(
+                        folderId = id,
+                        folderName = name,
+                        folderType = type
+                    )
+                )
+            },
+            onSearchClick = {
+                navController.navigate(Screen.Search)
+            }
+        )
     }
 }

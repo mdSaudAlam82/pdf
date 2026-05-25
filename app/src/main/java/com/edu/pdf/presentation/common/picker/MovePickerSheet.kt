@@ -81,7 +81,7 @@ fun MovePickerSheetRoute(
             when (event) {
                 is MovePickerEvent.MoveToTarget -> {
                     onTargetSelected(event.targetFolderId)
-                    // Move hone ke baad Root par reset karega
+                    // 🌟 CLEAN TRANSITION: Close picker immediately
                     viewModel.onAction(MovePickerAction.NavigateTo(null))
                     onDismiss()
                 }

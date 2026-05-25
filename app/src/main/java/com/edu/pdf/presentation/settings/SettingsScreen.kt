@@ -17,9 +17,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
-import com.edu.pdf.presentation.common.UniversalTopBar
 import com.edu.pdf.presentation.common.PremiumBottomBar
-@OptIn(ExperimentalMaterial3Api::class) // 🌟 BAS YE LINE ADD KARNI HAI
+import com.edu.pdf.presentation.common.UniversalTopBar
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     isTablet: Boolean,
@@ -38,7 +39,7 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = { UniversalTopBar(title = "Settings") },
-        bottomBar = { if (!isTablet) PremiumBottomBar(navController) },
+        bottomBar = { if (!isTablet) PremiumBottomBar(navController) }, // 🌟 RESTORED
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0.dp)
@@ -52,7 +53,6 @@ fun SettingsScreen(
         ) {
             Spacer(modifier = Modifier.height(24.dp))
 
-            // AI Copilot Section Header
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                 Spacer(modifier = Modifier.width(12.dp))

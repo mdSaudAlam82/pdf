@@ -184,6 +184,7 @@ class HomeViewModel @Inject constructor(
                             recentPdfs + recentFolders
                         }
                         1 -> { 
+                            // 🌟 2026 PRO: Database se saari 3,000+ IDs uthao
                             val folderIds = repository.getManagedFolders(null, isVault = false).first().map { it.folderId }
                             val pdfIds = repository.getUncategorizedPdfIdsFast()
                             folderIds + pdfIds
@@ -248,13 +249,32 @@ class HomeViewModel @Inject constructor(
             }
 
             is HomeAction.ConfirmMove -> {
-                val state = _internalState.value.activeSheetState as? HomeSheetState.MovePicker ?: return
-                _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
+                if (_internalState.value.activeSheetState !is HomeSheetState.MovePicker) return
+                
+                val currentSelected = _internalState.value.selectedIds
+                
+                _internalState.update { 
+                    it.copy(
+                        isProcessing = true, 
+                        activeSheetState = HomeSheetState.None,
+                        isSelectionMode = false,
+                        selectedIds = persistentSetOf()
+                    ) 
+                } 
+                
                 viewModelScope.launch(Dispatchers.IO) {
-                    moveItemsUseCase(state.items, action.targetFolderId, isVault = false)
+                    val pdfIds = currentSelected.filter { !it.startsWith("/") }.toSet()
+                    val folderIds = currentSelected.filter { it.startsWith("/") }.toList()
+                    
+                    moveItemsUseCase(
+                        selectedIds = pdfIds,
+                        folderIds = folderIds,
+                        targetFolderId = action.targetFolderId,
+                        sourcePath = null,
+                        isVault = false
+                    )
                     withContext(Dispatchers.Main) {
-                        _internalState.update { it.copy(isProcessing = false, isSelectionMode = false, selectedIds = persistentSetOf()) }
-                        _events.send(HomeEvent.ShowSnackbar("Moved successfully"))
+                        _internalState.update { it.copy(isProcessing = false) }
                     }
                 }
             }
@@ -332,10 +352,14 @@ class HomeViewModel @Inject constructor(
             is HomeAction.MovePdfsToCurrentFolder -> {
                 _internalState.update { it.copy(isProcessing = true, activeSheetState = HomeSheetState.None) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    val items = action.pdfIds.map { id -> 
-                        HomeItem.PdfItem(PdfFile(id = id, name = "", path = "", sizeInBytes = 0, lastModified = 0)) 
-                    }
-                    moveItemsUseCase(items, null, isVault = false)
+                    // 🌟 2026 PRO: Use IDs directly
+                    moveItemsUseCase(
+                        selectedIds = action.pdfIds.toSet(),
+                        folderIds = emptyList(),
+                        targetFolderId = null,
+                        sourcePath = null, // 🌟 Home has no parent folder
+                        isVault = false
+                    )
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false) }
                         _events.send(HomeEvent.ShowSnackbar("Added successfully!"))

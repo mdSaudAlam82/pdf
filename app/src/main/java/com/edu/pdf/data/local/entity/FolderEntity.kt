@@ -10,13 +10,12 @@ import java.util.UUID
 @Entity(
     tableName = "managed_folders",
     indices = [
-        Index(value = ["absolutePath"], unique = true), // 🌟 Path unique rahega par PK nahi
+        Index(value = ["absolutePath"], unique = true),
         Index(value = ["parentPath"]),
         Index(value = ["isVault"])
     ]
 )
 data class FolderEntity(
-    // 🌟 ELITE FIX: Ab ID primary key hai. Path change hone par bhi ye ID nahi badlegi.
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val absolutePath: String,
     val name: String,

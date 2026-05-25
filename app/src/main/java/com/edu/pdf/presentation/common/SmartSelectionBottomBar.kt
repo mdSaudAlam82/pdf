@@ -1,8 +1,5 @@
 package com.edu.pdf.presentation.common
 
-import android.widget.Toast
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -14,10 +11,9 @@ import androidx.compose.material.icons.filled.HistoryToggleOff
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -37,74 +33,58 @@ fun SmartSelectionBottomBar(
     onRemoveFromRecent: () -> Unit,
     onUnfavorite: () -> Unit
 ) {
-    // 🌟 STRICT MVI: Logic yahin calculate hoga (Single Source of Truth)
     val folderCount = selectedItems.count { it is HomeItem.FolderItem }
     val pdfCount = selectedItems.count { it is HomeItem.PdfItem }
     val totalCount = selectedItems.size
     val hasFolderSelected = folderCount > 0
 
+    val haptic = LocalHapticFeedback.current
+
     Surface(
-        color = MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.background,
         tonalElevation = 0.dp,
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding() // Edge-to-Edge, no fixed height
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding()
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             // 1. DELETE
-            SmartActionItem(
+            SelectionActionItem(
                 title = "Delete",
                 icon = Icons.Default.Delete,
-                enabled = totalCount > 0,
-                disabledMessage = "Select items to delete",
+                color = MaterialTheme.colorScheme.error,
                 onClick = onDelete
             )
 
-            // 2. CONTEXTUAL MIDDLE BUTTON
-            when (tabIndex) {
-                0 -> SmartActionItem(
-                    title = "Remove",
-                    icon = Icons.Default.HistoryToggleOff,
-                    enabled = totalCount > 0,
-                    disabledMessage = "Select items to remove",
-                    onClick = onRemoveFromRecent
-                )
-                1 -> SmartActionItem(
-                    title = "Move",
-                    icon = Icons.AutoMirrored.Filled.DriveFileMove,
-                    enabled = totalCount > 0,
-                    disabledMessage = "Select items to move",
-                    onClick = onMove
-                )
-                2 -> SmartActionItem(
-                    title = "Unfavorite",
-                    icon = Icons.Default.BookmarkRemove,
-                    enabled = totalCount > 0,
-                    disabledMessage = "Select items to unfavorite",
-                    onClick = onUnfavorite
-                )
+            // 2. CONTEXTUAL
+            val (contextTitle, contextIcon, contextAction) = when (tabIndex) {
+                0 -> Triple("Remove", Icons.Default.HistoryToggleOff, onRemoveFromRecent)
+                2 -> Triple("Unfavorite", Icons.Default.BookmarkRemove, onUnfavorite)
+                else -> Triple("Move", Icons.AutoMirrored.Filled.DriveFileMove, onMove)
             }
+            SelectionActionItem(
+                title = contextTitle,
+                icon = contextIcon,
+                onClick = contextAction
+            )
 
-            // 3. MERGE (Smart Logic)
+            // 3. MERGE
             val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
-            val mergeMsg = if (hasFolderSelected) "Cannot merge folders" else "Select at least 2 PDFs to merge"
-            SmartActionItem(
+            SelectionActionItem(
                 title = "Merge",
                 icon = Icons.AutoMirrored.Filled.CallMerge,
                 enabled = mergeEnabled,
-                disabledMessage = mergeMsg,
                 onClick = onMerge
             )
 
-            // 4. SHARE (Smart Logic)
+            // 4. SHARE
             val shareEnabled = totalCount > 0 && !hasFolderSelected
-            val shareMsg = if (hasFolderSelected) "Cannot share folders" else "Select PDFs to share"
-            SmartActionItem(
+            SelectionActionItem(
                 title = "Share",
                 icon = Icons.Default.Share,
                 enabled = shareEnabled,
-                disabledMessage = shareMsg,
                 onClick = onShare
             )
         }
@@ -112,38 +92,29 @@ fun SmartSelectionBottomBar(
 }
 
 @Composable
-private fun RowScope.SmartActionItem(
+private fun RowScope.SelectionActionItem(
     title: String,
-    icon: ImageVector,
-    enabled: Boolean,
-    disabledMessage: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color = MaterialTheme.colorScheme.primary,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-
-    val animatedColor by animateColorAsState(
-        targetValue = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-        animationSpec = tween(durationMillis = 300),
-        label = "ColorAnimation_$title"
-    )
+    val finalColor = if (enabled) color else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
 
     Column(
         modifier = Modifier
             .weight(1f)
-            .clickable {
-                if (enabled) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onClick()
-                } else {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    Toast.makeText(context, disabledMessage, Toast.LENGTH_SHORT).show()
-                }
+            .clickable(enabled = enabled) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
             }
-            .padding(vertical = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(vertical = 2.dp), // 🌟 2px (2dp) EXACT PADDING
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(icon, contentDescription = title, tint = animatedColor, modifier = Modifier.size(24.dp))
-        Text(text = title, fontSize = 11.sp, color = animatedColor, fontWeight = FontWeight.Medium)
+        Icon(imageVector = icon, contentDescription = title, tint = finalColor, modifier = Modifier.size(24.dp))
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(text = title, fontSize = 11.sp, color = finalColor, fontWeight = FontWeight.Bold)
     }
 }
