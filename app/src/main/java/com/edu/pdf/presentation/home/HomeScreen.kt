@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
-import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -37,16 +36,12 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.edu.pdf.domain.model.HomeItem
-import com.edu.pdf.presentation.common.PremiumBottomBar
-import com.edu.pdf.presentation.common.SmartSelectionBottomBar
 import com.edu.pdf.presentation.common.UniversalTopBar
 import com.edu.pdf.presentation.home.components.HomeContent
 import com.edu.pdf.presentation.home.components.HomeTabs
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.navigation.Screen
 import kotlinx.collections.immutable.PersistentSet
-import kotlinx.collections.immutable.persistentSetOf
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Composable
@@ -101,19 +96,19 @@ fun HomeScreenWrapper(
                 isSelectionMode = isSelectionMode,
                 selectedPdfs = selectedPdfs,
                 pagedPdfs = pagedPdfs,
-                navController = navController,
                 onSearchClick = onSearchClick,
                 onSelectionModeChange = { enabled -> viewModel.onAction(HomeAction.SetSelectionMode(enabled)) },
                 onToggleSelection = { id -> viewModel.onAction(HomeAction.ToggleSelection(id)) },
                 onSelectAll = { ids -> viewModel.onAction(HomeAction.SelectAll(ids)) },
-                onAction = viewModel::onAction
+                onAction = viewModel::onAction,
+                viewModel = viewModel
             )
             HomeOverlays(state = uiState, foldersTree = uiState.foldersTree, onAction = viewModel::onAction)
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3WindowSizeClassApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreenPure(
     state: HomeUiState,
@@ -121,26 +116,22 @@ fun HomeScreenPure(
     isSelectionMode: Boolean,
     selectedPdfs: PersistentSet<String>,
     pagedPdfs: androidx.paging.compose.LazyPagingItems<HomeItem.PdfItem>,
-    navController: NavHostController,
     onSearchClick: () -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
     onToggleSelection: (String) -> Unit,
     onSelectAll: (List<String>) -> Unit,
-    onAction: (HomeAction) -> Unit
+    onAction: (HomeAction) -> Unit,
+    viewModel: HomeViewModel
 ) {
     val haptic = LocalHapticFeedback.current
     var currentTab by rememberSaveable { mutableIntStateOf(1) }
-    val context = LocalContext.current
-
-    val activity = androidx.activity.compose.LocalActivity.current ?: return
-    val windowSizeClass = androidx.compose.material3.windowsizeclass.calculateWindowSizeClass(activity = activity)
-    val isTablet = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
     val pagerState = rememberPagerState(pageCount = { 3 }, initialPage = 1)
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(pagerState.currentPage) {
         currentTab = pagerState.currentPage
+        viewModel.onAction(HomeAction.UpdateTabIndex(pagerState.currentPage))
     }
 
     val currentTabItems = remember(currentTab, state.recentItems, state.currentFolders, state.favoritePdfs, pagedPdfs.itemSnapshotList) {
@@ -162,119 +153,89 @@ fun HomeScreenPure(
 
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
-        contentWindowInsets = WindowInsets(0.dp),
-        topBar = {
-            Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
-                if (isSelectionMode) {
-                    val currentTabTotalCount = when (currentTab) {
-                        0 -> state.recentItems.size
-                        1 -> state.currentFolders.size + pagedPdfs.itemCount
-                        2 -> state.favoritePdfs.size
-                        else -> 0
-                    }
+    // 🌟 ARCHITECTURE MASTERPIECE: Pure Content View (No Scaffold!)
+    // The Shell (MainAppScreen) handles the Scaffold.
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(scrollBehavior.nestedScrollConnection)
+    ) {
+        // TOP BAR SECTION
+        Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
+            if (isSelectionMode) {
+                val currentTabTotalCount = when (currentTab) {
+                    0 -> state.recentItems.size
+                    1 -> state.currentFolders.size + pagedPdfs.itemCount
+                    2 -> state.favoritePdfs.size
+                    else -> 0
+                }
 
-                    val isAllCurrentTabSelected = if (currentTabTotalCount == 0) false else {
-                        if (currentTab == 1) {
-                            selectedPdfs.size >= currentTabTotalCount && currentTabItems.all { it.id in selectedPdfs }
+                val isAllCurrentTabSelected = if (currentTabTotalCount == 0) false else {
+                    if (currentTab == 1) {
+                        selectedPdfs.size >= currentTabTotalCount && currentTabItems.all { it.id in selectedPdfs }
+                    } else {
+                        val tabIds = currentTabItems.map { it.id }
+                        selectedPdfs.containsAll(tabIds) && tabIds.isNotEmpty()
+                    }
+                }
+
+                SelectionTopBar(
+                    selectedCount = selectedPdfs.size,
+                    isAllSelected = isAllCurrentTabSelected,
+                    onClearSelection = { onSelectionModeChange(false) },
+                    onSelectAllToggle = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (isAllCurrentTabSelected) {
+                            onSelectionModeChange(false)
                         } else {
-                            val tabIds = currentTabItems.map { it.id }
-                            selectedPdfs.containsAll(tabIds) && tabIds.isNotEmpty()
-                        }
-                    }
-
-                    SelectionTopBar(
-                        selectedCount = selectedPdfs.size,
-                        isAllSelected = isAllCurrentTabSelected,
-                        onClearSelection = { onSelectionModeChange(false) },
-                        onSelectAllToggle = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            if (isAllCurrentTabSelected) {
-                                onSelectionModeChange(false)
-                            } else {
-                                onAction(HomeAction.SelectAllInTab(currentTab))
-                            }
-                        }
-                    )
-                } else {
-                    UniversalTopBar(
-                        title = "Hi Read",
-                        isGridView = state.isGridView,
-                        showSearch = true,
-                        showCreateFolder = currentTab == 1,
-                        showSort = currentTab != 0,
-                        showSelectAll = true,
-                        showToggleView = true,
-                        onSelectAllClick = {
-                            onSelectionModeChange(true)
                             onAction(HomeAction.SelectAllInTab(currentTab))
-                        },
-                        onSearchClick = onSearchClick,
-                        onSortClick = { onAction(HomeAction.OpenSheet(HomeSheetState.SortPicker)) },
-                        onToggleView = { onAction(HomeAction.ToggleViewMode) },
-                        onCreateFolderClick = { onAction(HomeAction.OpenSheet(HomeSheetState.CreateFolderDialog())) },
-                        scrollBehavior = scrollBehavior
-                    )
-
-                    HomeTabs(
-                        selectedTabIndex = pagerState.currentPage,
-                        onTabSelected = { index -> coroutineScope.launch { pagerState.animateScrollToPage(index) } }
-                    )
-                }
-            }
-        },
-        bottomBar = {
-            // 🌟 PIXEL PERFECT SWAP: Only ONE bar exists at a time. No stacking.
-            if (!isTablet) {
-                if (isSelectionMode) {
-                    val selectedIdsSet = remember(selectedPdfs) { selectedPdfs.toSet() }
-                    val selectedItemsList = remember(currentTabItems, selectedIdsSet) {
-                        if (selectedIdsSet.isEmpty()) emptyList() else currentTabItems.filter { it.id in selectedIdsSet }
+                        }
                     }
+                )
+            } else {
+                UniversalTopBar(
+                    title = "Hi Read",
+                    isGridView = state.isGridView,
+                    showSearch = true,
+                    showCreateFolder = currentTab == 1,
+                    showSort = currentTab != 0,
+                    showSelectAll = true,
+                    showToggleView = true,
+                    onSelectAllClick = {
+                        onSelectionModeChange(true)
+                        onAction(HomeAction.SelectAllInTab(currentTab))
+                    },
+                    onSearchClick = onSearchClick,
+                    onSortClick = { onAction(HomeAction.OpenSheet(HomeSheetState.SortPicker)) },
+                    onToggleView = { onAction(HomeAction.ToggleViewMode) },
+                    onCreateFolderClick = { onAction(HomeAction.OpenSheet(HomeSheetState.CreateFolderDialog())) },
+                    scrollBehavior = scrollBehavior
+                )
 
-                    SmartSelectionBottomBar(
-                        selectedItems = selectedItemsList,
-                        tabIndex = currentTab,
-                        onDelete = { onAction(HomeAction.OpenSheet(HomeSheetState.DeleteConfirm(selectedItemsList))) },
-                        onMove = { onAction(HomeAction.OpenSheet(HomeSheetState.MovePicker(selectedItemsList))) },
-                        onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                        onShare = {
-                            val pdfUris = selectedItemsList.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                            if (pdfUris.isNotEmpty()) {
-                                val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                    type = "application/pdf"
-                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
-                            }
-                        },
-                        onRemoveFromRecent = { onAction(HomeAction.RemoveFromRecent(selectedItemsList)) },
-                        onUnfavorite = { onAction(HomeAction.UnfavoritePdfs(selectedItemsList.filterIsInstance<HomeItem.PdfItem>().map { it.pdf })) }
-                    )
-                } else {
-                    // Standard Navigation Bar
-                    PremiumBottomBar(navController = navController)
-                }
+                HomeTabs(
+                    selectedTabIndex = pagerState.currentPage,
+                    onTabSelected = { index -> coroutineScope.launch { pagerState.animateScrollToPage(index) } }
+                )
             }
         }
-    ) { paddingValues ->
-        Row(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            HomeContent(
-                state = state,
-                isRefreshing = isRefreshing,
-                isSelectionMode = isSelectionMode,
-                selectedPdfs = selectedPdfs,
-                pagedPdfs = pagedPdfs,
-                paddingValues = PaddingValues(0.dp),
-                pagerState = pagerState,
-                onAction = onAction,
-                onToggleSelection = onToggleSelection,
-                onSelectionModeChange = onSelectionModeChange
-            )
-        }
+
+        // CONTENT SECTION
+        HomeContent(
+            state = state,
+            isRefreshing = isRefreshing,
+            isSelectionMode = isSelectionMode,
+            selectedPdfs = selectedPdfs,
+            pagedPdfs = pagedPdfs,
+            paddingValues = PaddingValues(0.dp),
+            pagerState = pagerState,
+            onAction = onAction,
+            onToggleSelection = onToggleSelection,
+            onSelectionModeChange = onSelectionModeChange
+        )
     }
+
+    // 🌟 SELECTION BAR REMOVED FROM HERE
+    // It is now managed by the Shell (MainAppScreen) in the same physical footprint as the Bottom Bar.
 }
 
 @Composable
@@ -288,14 +249,14 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
     }
 }
 
-// 🌟 THE 2026 NAVIGATION ENGINE: Home Section
 fun NavGraphBuilder.homeSection(
     navController: NavHostController,
-    isTablet: Boolean
+    isTablet: Boolean,
+    viewModel: HomeViewModel
 ) {
     composable<Screen.Home> {
         HomeScreenWrapper(
-            viewModel = hiltViewModel(),
+            viewModel = viewModel,
             navController = navController,
             onPdfClick = { path ->
                 navController.navigate(Screen.PdfViewer(pdfPath = path))

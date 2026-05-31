@@ -56,7 +56,8 @@ data class HomeUiState(
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: HomeSheetState = HomeSheetState.None,
-    val isProcessing: Boolean = false
+    val isProcessing: Boolean = false,
+    val currentTabIndex: Int = 1 // 🌟 THE NEW BRAIN INPUT: Tracks active tab
 )
 
 sealed interface HomeAction {
@@ -84,6 +85,7 @@ sealed interface HomeAction {
     data class ImportFile(val uriString: String) : HomeAction
     data class MovePdfsToCurrentFolder(val pdfIds: List<String>) : HomeAction
     data class SelectAllInTab(val tabIndex: Int) : HomeAction
+    data class UpdateTabIndex(val index: Int) : HomeAction // 🌟 NEW ACTION: Updates tab state
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -369,6 +371,10 @@ class HomeViewModel @Inject constructor(
 
             is HomeAction.OpenAppPdfPicker -> {
                 _internalState.update { it.copy(activeSheetState = HomeSheetState.AppPdfPicker) }
+            }
+
+            is HomeAction.UpdateTabIndex -> {
+                _internalState.update { it.copy(currentTabIndex = action.index) }
             }
         }
     }

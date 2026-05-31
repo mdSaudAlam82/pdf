@@ -2,6 +2,7 @@ package com.edu.pdf.presentation.home.components
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Schedule
@@ -25,7 +26,7 @@ fun HomeTabs(
     val homeTabsList = listOf(
         Triple(stringResource(R.string.tab_recent), Icons.Default.Schedule, 0),
         Triple(stringResource(R.string.tab_all_files), Icons.Default.Description, 1),
-        Triple(stringResource(R.string.tab_favorites), Icons.Default.Favorite, 2)
+        Triple(stringResource(R.string.tab_favorites), Icons.Default.BookmarkAdd, 2)
     )
 
     // 🌟 2026 MODERN API: PrimaryTabRow (Isme negative width crash apne aap handle hota hai)

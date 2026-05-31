@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,7 +57,7 @@ fun SmartSelectionBottomBar(
                 onClick = onDelete
             )
 
-            // 2. CONTEXTUAL
+            // 2. CONTEXTUAL (Move / Remove / Unfav)
             val (contextTitle, contextIcon, contextAction) = when (tabIndex) {
                 0 -> Triple("Remove", Icons.Default.HistoryToggleOff, onRemoveFromRecent)
                 2 -> Triple("Unfavorite", Icons.Default.BookmarkRemove, onUnfavorite)
@@ -70,7 +69,7 @@ fun SmartSelectionBottomBar(
                 onClick = contextAction
             )
 
-            // 3. MERGE
+            // 3. MERGE (🌟 CLASSIC UI: Always show, Fade if invalid)
             val mergeEnabled = pdfCount >= 2 && !hasFolderSelected
             SelectionActionItem(
                 title = "Merge",
@@ -79,7 +78,7 @@ fun SmartSelectionBottomBar(
                 onClick = onMerge
             )
 
-            // 4. SHARE
+            // 4. SHARE (🌟 CLASSIC UI: Always show, Fade if folders present)
             val shareEnabled = totalCount > 0 && !hasFolderSelected
             SelectionActionItem(
                 title = "Share",
@@ -109,7 +108,7 @@ private fun RowScope.SelectionActionItem(
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .padding(vertical = 2.dp), // 🌟 2px (2dp) EXACT PADDING
+            .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {

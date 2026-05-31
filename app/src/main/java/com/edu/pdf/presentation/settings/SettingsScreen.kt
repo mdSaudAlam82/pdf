@@ -11,20 +11,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
-import com.edu.pdf.presentation.common.PremiumBottomBar
 import com.edu.pdf.presentation.common.UniversalTopBar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    isTablet: Boolean,
-    navController: NavHostController,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -37,20 +35,15 @@ fun SettingsScreen(
         }
     }
 
-    Scaffold(
-        topBar = { UniversalTopBar(title = "Settings") },
-        bottomBar = { if (!isTablet) PremiumBottomBar(navController) }, // 🌟 RESTORED
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0.dp)
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
+    // 🌟 ARCHITECTURE MASTERPIECE: Pure Content (No Scaffold!)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
+        UniversalTopBar(title = "Settings")
+
+        Column(modifier = Modifier.padding(horizontal = 24.dp)) {
             Spacer(modifier = Modifier.height(24.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -110,6 +103,8 @@ fun SettingsScreen(
                     Text("Verify & Save Keys", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
+
+            Spacer(modifier = Modifier.height(100.dp)) // Padding for bottom bar
         }
     }
 }

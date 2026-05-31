@@ -12,7 +12,7 @@ composeBom = "2026.04.01"
 pdfVersion = "1.0.0-alpha18"
 fragmentKtx = "1.8.9"
 appcompat = "1.7.1"
-material = "1.13.0"
+material = "1.14.0"
 materialIconsExtended = "1.7.8"
 # Inhe [versions] block ke niche add karein
 hilt = "2.59.2"
@@ -41,8 +41,10 @@ mlkit-devanagari-gms = "16.0.1"
 generativeAi = "0.9.0"
 mlkitGenAi = "1.0.0-beta2"
 securityCrypto = "1.1.0"
-mockk = "1.13.10"
-coroutinesTest = "1.8.0"
+mockk = "1.14.9"
+coroutinesTest = "1.11.0"
+# 🌟 iText 9.6.0: The Gold Standard for PDF Processing in May 2026
+itext = "9.6.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -107,6 +109,10 @@ google-mlkit-genai = { group = "com.google.mlkit", name = "genai-prompt", versio
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
+
+# 🌟 iText Core Infrastructure for Android
+itext-core-android = { group = "com.itextpdf.android", name = "itext-core-android", version.ref = "itext" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

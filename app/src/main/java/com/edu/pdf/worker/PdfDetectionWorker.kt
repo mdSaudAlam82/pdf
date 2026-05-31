@@ -27,7 +27,7 @@ class PdfDetectionWorker @AssistedInject constructor(
 
             val latestPdfs = repository.getAllPdfs(SortType.DATE_DESC).first().take(10)
             val nowSeconds = System.currentTimeMillis() / 1000
-            
+
             Log.d("PdfDetectionWorker", "Scanning top 10 newest PDFs in system")
 
             latestPdfs.forEach { pdf ->

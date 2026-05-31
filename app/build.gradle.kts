@@ -123,7 +123,8 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
-
+    // 🌟 iText 9.6.0: The Enterprise PDF Engine for May 2026
+    implementation(libs.itext.core.android)
 }
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")

@@ -1,6 +1,5 @@
 package com.edu.pdf.presentation.folders
 
-import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -9,7 +8,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -18,9 +27,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,7 +51,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -45,8 +65,6 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.edu.pdf.domain.model.Folder
 import com.edu.pdf.domain.model.FolderType
-import com.edu.pdf.domain.model.HomeItem
-import com.edu.pdf.presentation.common.SmartSelectionBottomBar
 import com.edu.pdf.presentation.home.HomeAction
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
@@ -63,7 +81,7 @@ fun UnifiedFolderScreen(
     onPdfClick: (String) -> Unit,
     onFolderNavigate: (String, String, FolderType) -> Unit,
     onBreadcrumbNavigate: (Folder?) -> Unit,
-    viewModel: UnifiedFolderViewModel = hiltViewModel()
+    viewModel: UnifiedFolderViewModel = hiltViewModel(viewModelStoreOwner = androidx.activity.compose.LocalActivity.current as androidx.lifecycle.ViewModelStoreOwner)
 ) {
     LaunchedEffect(folderId, folderName, folderType) {
         if (folderId != null && folderName != null && folderType != null) {
@@ -129,185 +147,159 @@ fun UnifiedFolderScreen(
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        contentWindowInsets = WindowInsets(0.dp),
-        topBar = {
-            if (isSelectionMode) {
-                val totalItems = uiState.folders.size + pagedPdfs.itemCount
-                val isAllSelected = totalItems > 0 && selectedPdfs.size >= totalItems
+    // 🌟 ARCHITECTURE MASTERPIECE: Unified Content (No Scaffold!)
+    Column(modifier = Modifier.fillMaxSize()) {
+        // TOP BAR
+        if (isSelectionMode) {
+            val totalItems = uiState.folders.size + pagedPdfs.itemCount
+            val isAllSelected = totalItems > 0 && selectedPdfs.size >= totalItems
 
-                SelectionTopBar(
-                    selectedCount = selectedPdfs.size,
-                    isAllSelected = isAllSelected,
-                    onClearSelection = { viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false)) },
-                    onSelectAllToggle = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        if (isAllSelected) {
-                            viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
-                        } else {
-                            viewModel.onAction(UnifiedFolderAction.SelectAllItems)
-                        }
-                    }
-                )
-            } else {
-                val totalItems = uiState.folders.size + pagedPdfs.itemCount
-                val isEmpty = totalItems == 0
-                
-                // 🌟 THE 2026 SMART HEADER LOGIC
-                val isVirtual = uiState.folderType == FolderType.VIRTUAL_HUB
-                val isVault = uiState.folderType == FolderType.SECURE_VAULT
-                
-                // Rule: If Breadcrumbs are visible (Virtual/Home), hide title and show 'X'
-                // Else (Device), show title and show 'Back'
-                val headerTitle = if (isVirtual) "" else uiState.folderName
-                val navIcon = if (isVirtual || isVault) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack
-
-                com.edu.pdf.presentation.common.UniversalTopBar(
-                    title = headerTitle,
-                    navigationIcon = navIcon,
-                    onBackClick = onBack,
-                    isGridView = uiState.isGridView,
-                    showSearch = false, 
-                    showCreateFolder = uiState.canCreateSubFolders,
-                    showSort = totalItems > 1, 
-                    showToggleView = !isEmpty, 
-                    showSelectAll = !isEmpty,
-                    onSelectAllClick = {
-                        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+            SelectionTopBar(
+                selectedCount = selectedPdfs.size,
+                isAllSelected = isAllSelected,
+                onClearSelection = { viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false)) },
+                onSelectAllToggle = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    if (isAllSelected) {
+                        viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
+                    } else {
                         viewModel.onAction(UnifiedFolderAction.SelectAllItems)
-                    },
-                    onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
-                    onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
+                    }
+                }
+            )
+        } else {
+            val totalItems = uiState.folders.size + pagedPdfs.itemCount
+            val isEmpty = totalItems == 0
+            
+            val isVirtual = uiState.folderType == FolderType.VIRTUAL_HUB
+            val isVault = uiState.folderType == FolderType.SECURE_VAULT
+            
+            val headerTitle = if (isVirtual) "" else uiState.folderName
+            val navIcon = if (isVirtual || isVault) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack
+
+            com.edu.pdf.presentation.common.UniversalTopBar(
+                title = headerTitle,
+                navigationIcon = navIcon,
+                onBackClick = onBack, // 🌟 THE FIX: Wire the 'X' button correctly
+                isGridView = uiState.isGridView,
+                showSearch = false, 
+                showCreateFolder = uiState.canCreateSubFolders,
+                showSort = totalItems > 1, 
+                showToggleView = !isEmpty, 
+                showSelectAll = !isEmpty,
+                onSelectAllClick = {
+                    viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+                    viewModel.onAction(UnifiedFolderAction.SelectAllItems)
+                },
+                onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
+                onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
+                onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) }
+            )
+        }
+
+        // BREADCRUMBS
+        if (uiState.shouldShowBreadcrumbs) {
+            com.edu.pdf.presentation.common.PremiumBreadcrumbs(
+                breadcrumbs = uiState.breadcrumbs,
+                onNavigate = { folder -> onBreadcrumbNavigate(folder) }
+            )
+        }
+
+        // CONTENT
+        Box(modifier = Modifier.weight(1f)) {
+            val isEmpty = uiState.folders.isEmpty() && pagedPdfs.itemCount == 0
+            val shouldShowEmptyState = uiState.isDataLoaded && isEmpty && !uiState.isLoading
+
+            if (shouldShowEmptyState) {
+                PremiumEmptyState(
+                    canImport = uiState.canImport,
+                    canCreateFolder = uiState.canCreateSubFolders,
+                    onImportFromDeviceClick = { filePicker.launch("application/pdf") },
+                    onImportFromAppClick = { viewModel.onAction(UnifiedFolderAction.OpenAppPdfPicker) },
                     onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) }
                 )
-            }
-        },
-        bottomBar = {
-            if (isSelectionMode) {
-                SmartSelectionBottomBar(
-                    selectedItems = selectedItems,
-                    tabIndex = 1,
-                    onDelete = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.DeleteConfirm(selectedItems))) },
-                    onMove = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.MovePicker(selectedItems))) },
-                    onMerge = { Toast.makeText(context, "Merge Engine: Coming Soon!", Toast.LENGTH_SHORT).show() },
-                    onShare = {
-                        val pdfUris = selectedItems.mapNotNull { it as? HomeItem.PdfItem }.map { it.pdf.id.toUri() }
-                        if (pdfUris.isNotEmpty()) {
-                            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                                type = "application/pdf"
-                                putParcelableArrayListExtra(Intent.EXTRA_STREAM, java.util.ArrayList(pdfUris))
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "Share PDFs via"))
+            } else if (uiState.isDataLoaded) {
+                if (uiState.isGridView) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 110.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
+                            UnifiedGridItem(
+                                item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                onAction = { action ->
+                                    if (action is HomeAction.NavigateToVirtualFolder) {
+                                        onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                    } else {
+                                        viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
+                                    }
+                                },
+                                onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
+                            )
                         }
-                    },
-                    onRemoveFromRecent = {},
-                    onUnfavorite = {}
-                )
-            }
-        }
-    ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.padding(paddingValues)) {
 
-                if (uiState.shouldShowBreadcrumbs) {
-                    com.edu.pdf.presentation.common.PremiumBreadcrumbs(
-                        breadcrumbs = uiState.breadcrumbs,
-                        onNavigate = { folder -> onBreadcrumbNavigate(folder) }
-                    )
-                }
-
-                val isEmpty = uiState.folders.isEmpty() && pagedPdfs.itemCount == 0
-                val shouldShowEmptyState = uiState.isDataLoaded && isEmpty && !uiState.isLoading
-
-                if (shouldShowEmptyState) {
-                    PremiumEmptyState(
-                        canImport = uiState.canImport,
-                        canCreateFolder = uiState.canCreateSubFolders,
-                        onImportFromDeviceClick = { filePicker.launch("application/pdf") },
-                        onImportFromAppClick = { viewModel.onAction(UnifiedFolderAction.OpenAppPdfPicker) },
-                        onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) }
-                    )
-                } else if (uiState.isDataLoaded) {
-                    if (uiState.isGridView) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 110.dp),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 120.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
-                        ) {
-                            items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
+                        items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
+                            val pdfItem = pagedPdfs[index]
+                            if (pdfItem != null) {
                                 UnifiedGridItem(
-                                    item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                    item = pdfItem, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
                                     onAction = { action ->
-                                        if (action is HomeAction.NavigateToVirtualFolder) {
-                                            onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                        if (action is HomeAction.ValidateAndOpenPdf) {
+                                            onPdfClick(action.pdf.path)
                                         } else {
-                                            viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
+                                            viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
                                         }
                                     },
                                     onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
                                 )
-                            }
-
-                            items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
-                                val pdfItem = pagedPdfs[index]
-                                if (pdfItem != null) {
-                                    UnifiedGridItem(
-                                        item = pdfItem, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
-                                        onAction = { action ->
-                                            if (action is HomeAction.ValidateAndOpenPdf) {
-                                                onPdfClick(action.pdf.path)
-                                            } else {
-                                                viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
-                                            }
-                                        },
-                                        onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
-                                    )
-                                }
                             }
                         }
-                    } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-                            items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
+                        items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
+                            UnifiedListItem(
+                                item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                onAction = { action ->
+                                    if (action is HomeAction.NavigateToVirtualFolder) {
+                                        onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                    } else {
+                                        viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
+                                    }
+                                },
+                                onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
+                            )
+                        }
+
+                        items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
+                            val pdfItem = pagedPdfs[index]
+                            if (pdfItem != null) {
                                 UnifiedListItem(
-                                    item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
+                                    item = pdfItem, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
                                     onAction = { action ->
-                                        if (action is HomeAction.NavigateToVirtualFolder) {
-                                            onFolderNavigate(action.folder.folderId, action.folder.name, uiState.folderType)
+                                        if (action is HomeAction.ValidateAndOpenPdf) {
+                                            onPdfClick(action.pdf.path)
                                         } else {
-                                            viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
+                                            viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
                                         }
                                     },
                                     onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
                                 )
-                            }
-
-                            items(count = pagedPdfs.itemCount, key = pagedPdfs.itemKey { it.pdf.id }) { index ->
-                                val pdfItem = pagedPdfs[index]
-                                if (pdfItem != null) {
-                                    UnifiedListItem(
-                                        item = pdfItem, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,
-                                        onAction = { action ->
-                                            if (action is HomeAction.ValidateAndOpenPdf) {
-                                                onPdfClick(action.pdf.path)
-                                            } else {
-                                                viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
-                                            }
-                                        },
-                                        onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
-                                    )
-                                }
                             }
                         }
                     }
                 }
             }
         }
-        UnifiedFolderOverlays(state = uiState, foldersTree = uiState.foldersTree, onAction = viewModel::onAction)
+
+        // 🌟 SELECTION BAR REMOVED FROM HERE
+        // It is now managed by the Shell (MainAppScreen).
     }
+    
+    UnifiedFolderOverlays(state = uiState, foldersTree = uiState.foldersTree, onAction = viewModel::onAction)
 }
 
 @Composable
@@ -340,12 +332,11 @@ private fun ProEmptyStateCard(title: String, icon: ImageVector, iconTint: Color,
 // 🌟 THE 2026 NAVIGATION ENGINE: Folders Section
 fun NavGraphBuilder.foldersSection(
     navController: NavHostController,
-    isTablet: Boolean
+    isTablet: Boolean,
+    unifiedViewModel: UnifiedFolderViewModel
 ) {
     composable<Screen.Folders> {
         FoldersScreen(
-            navController = navController,
-            isTablet = isTablet,
             onFolderClick = { id, name ->
                 val encodedId = Uri.encode(id)
                 navController.navigate(Screen.UnifiedFolder(folderId = encodedId, folderName = name, folderType = FolderType.PHYSICAL_DEVICE))
@@ -359,7 +350,27 @@ fun NavGraphBuilder.foldersSection(
             folderId = route.folderId,
             folderName = route.folderName,
             folderType = route.folderType,
-            onBack = { navController.popBackStack() },
+            onBack = {
+                // 🌟 ELITE FIX: Intelligent Cross Button Logic for Nested Folders
+                if (route.folderType == FolderType.VIRTUAL_HUB || route.folderType == FolderType.SECURE_VAULT) {
+                    // 1. अगर आप Folders टैब से आए हैं, तो पूरा नेविगेशन काटकर वापस Folders पर जाएं
+                    val poppedToFolders = navController.popBackStack(Screen.Folders, inclusive = false)
+
+                    // 2. अगर Folders नहीं मिला (मतलब आप Home टैब से आए थे), तो पूरा काटकर Home पर जाएं
+                    if (!poppedToFolders) {
+                        val poppedToHome = navController.popBackStack(Screen.Home, inclusive = false)
+
+                        // 3. Fallback (Safe-net: अगर कुछ और अनएक्सपेक्टेड हो)
+                        if (!poppedToHome) {
+                            navController.popBackStack()
+                        }
+                    }
+                } else {
+                    // Physical Device Folders के लिए Arrow (<) बटन होता है,
+                    // इसलिए उसे हमेशा एक-एक कदम (Step-by-step) ही पीछे जाना चाहिए।
+                    navController.popBackStack()
+                }
+            },
             onPdfClick = { path ->
                 navController.navigate(Screen.PdfViewer(pdfPath = path))
             },
@@ -374,7 +385,8 @@ fun NavGraphBuilder.foldersSection(
                     val encodedId = Uri.encode(folder.folderId)
                     navController.navigate(Screen.UnifiedFolder(folderId = encodedId, folderName = folder.name, folderType = route.folderType))
                 }
-            }
+            },
+            viewModel = unifiedViewModel
         )
     }
 }

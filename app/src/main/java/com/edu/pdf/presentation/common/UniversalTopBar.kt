@@ -1,15 +1,16 @@
 package com.edu.pdf.presentation.common
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.CheckBox
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -100,6 +101,7 @@ fun UniversalTopBar(
         },
         windowInsets = TopAppBarDefaults.windowInsets,
         scrollBehavior = scrollBehavior,
+
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent,

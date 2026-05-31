@@ -33,15 +33,12 @@ import androidx.fragment.app.FragmentActivity
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import com.edu.pdf.presentation.common.PremiumBottomBar
 import com.edu.pdf.presentation.common.UniversalTopBar
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FoldersScreen(
-    navController: NavHostController, // 🌟 NAYA
-    isTablet: Boolean, // 🌟 NAYA
     onFolderClick: (String, String) -> Unit,
     viewModel: FoldersViewModel = hiltViewModel()
 ) {
@@ -73,44 +70,37 @@ fun FoldersScreen(
             .build()
     }
 
-    Scaffold(
-        topBar = { UniversalTopBar(title = "Device Folders", scrollBehavior = scrollBehavior) },
-        bottomBar = { if (!isTablet) PremiumBottomBar(navController) }, // 🌟 RESTORED
-        containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0.dp)
-    ) { padding ->
+    // 🌟 ARCHITECTURE MASTERPIECE: Pure Content (No Scaffold!)
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        UniversalTopBar(title = "Device Folders", scrollBehavior = scrollBehavior)
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+        PremiumVaultCard(
+            onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                if (biometricPrompt != null) {
+                    biometricPrompt.authenticate(promptInfo)
+                } else {
+                    onFolderClick("vault_root", "Private Vault")
+                }
+            }
+        )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize()
         ) {
-
-            PremiumVaultCard(
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    if (biometricPrompt != null) {
-                        biometricPrompt.authenticate(promptInfo)
-                    } else {
-                        onFolderClick("vault_root", "Private Vault")
-                    }
-                }
-            )
-
-            LazyColumn(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(folders) { folder ->
-                    PhysicalFolderItem(
-                        folderName = folder.name,
-                        pdfCount = folder.pdfCount,
-                        onClick = { onFolderClick(folder.absolutePath, folder.name) }
-                    )
-                }
+            items(folders) { folder ->
+                PhysicalFolderItem(
+                    folderName = folder.name,
+                    pdfCount = folder.pdfCount,
+                    onClick = { onFolderClick(folder.absolutePath, folder.name) }
+                )
             }
         }
     }
 }
+
 @Composable
 fun PremiumVaultCard(onClick: () -> Unit) {
     var pressed by remember { mutableStateOf(false) }
