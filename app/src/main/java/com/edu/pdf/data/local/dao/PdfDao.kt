@@ -158,6 +158,12 @@ interface PdfDao {
     @Query("UPDATE pdf_table SET parentPath = :newParentPath, isVault = :isVault WHERE id = :pdfId")
     suspend fun movePdfToFolder(pdfId: String, newParentPath: String?, isVault: Boolean)
 
+    @Query("SELECT * FROM pdf_table WHERE path = :path LIMIT 1")
+    suspend fun getPdfByPath(path: String): PdfEntity?
+
+    @Query("SELECT * FROM pdf_table WHERE path = :path LIMIT 1")
+    fun getPdfByPathFlow(path: String): Flow<PdfEntity?>
+
     // 🌟 THE 2026 PERSISTENCE ENGINE: Mark IDs for Worker (Bypass 10KB limit)
     @Query("UPDATE pdf_table SET lastOpenedTime = :workerBatchId WHERE id IN (:ids)")
     suspend fun markPdfsForWorker(ids: List<String>, workerBatchId: Long)

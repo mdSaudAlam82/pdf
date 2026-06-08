@@ -51,8 +51,6 @@ data class HomeUiState(
     val favoritePdfs: ImmutableList<PdfFile> = persistentListOf(),
     val foldersTree: ImmutableList<Folder> = persistentListOf(),
     val isRefreshing: Boolean = false,
-    val isSelectionMode: Boolean = false,
-    val selectedIds: PersistentSet<String> = persistentSetOf(),
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: HomeSheetState = HomeSheetState.None,
@@ -62,9 +60,6 @@ data class HomeUiState(
 
 sealed interface HomeAction {
     data object Initialize : HomeAction
-    data class ToggleSelection(val id: String) : HomeAction
-    data class SetSelectionMode(val enabled: Boolean) : HomeAction
-    data class SelectAll(val ids: List<String>) : HomeAction
     data class NavigateToVirtualFolder(val folder: Folder) : HomeAction
     data class OpenSheet(val state: HomeSheetState) : HomeAction
     data object CloseSheet : HomeAction
@@ -104,7 +99,8 @@ class HomeViewModel @Inject constructor(
     private val removeRecentHistoryUseCase: RemoveRecentHistoryUseCase,
     private val validatePdfFileUseCase: ValidatePdfFileUseCase,
     private val markPdfAsOpenedUseCase: MarkPdfAsOpenedUseCase,
-    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase
+    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase,
+    private val selectionManager: com.edu.pdf.presentation.core.SelectionManager
 ) : ViewModel() {
 
     private val _internalState = MutableStateFlow(HomeUiState(isLoading = true, activeSheetState = HomeSheetState.None))
@@ -169,13 +165,6 @@ class HomeViewModel @Inject constructor(
     fun onAction(action: HomeAction) {
         when (action) {
             is HomeAction.Initialize -> if (!hasInitialized) { viewModelScope.launch(Dispatchers.IO) { scanPdfsUseCase() }; hasInitialized = true }
-            is HomeAction.ToggleSelection -> {
-                val currentSelected = _internalState.value.selectedIds
-                val newSelection = if (currentSelected.contains(action.id)) currentSelected.remove(action.id) else currentSelected.add(action.id)
-                _internalState.update { it.copy(selectedIds = newSelection) }
-            }
-            is HomeAction.SetSelectionMode -> _internalState.update { it.copy(isSelectionMode = action.enabled, selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds) }
-            is HomeAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
             
             is HomeAction.SelectAllInTab -> {
                 viewModelScope.launch(Dispatchers.IO) {
@@ -195,7 +184,7 @@ class HomeViewModel @Inject constructor(
                         else -> emptyList()
                     }
                     withContext(Dispatchers.Main) {
-                        _internalState.update { it.copy(selectedIds = allIds.toPersistentSet()) }
+                        selectionManager.selectAll(allIds)
                     }
                 }
             }
@@ -244,7 +233,8 @@ class HomeViewModel @Inject constructor(
                     foldersToDelete.forEach { deleteFolderUseCase(it.folder.folderId) }
                     if (pdfsToDelete.isNotEmpty()) deletePdfsUseCase(pdfsToDelete)
                     withContext(Dispatchers.Main) {
-                        _internalState.update { it.copy(isProcessing = false, isSelectionMode = false, selectedIds = persistentSetOf()) }
+                        _internalState.update { it.copy(isProcessing = false) }
+                        selectionManager.clearSelection()
                         _events.send(HomeEvent.ShowSnackbar("Items deleted successfully"))
                     }
                 }
@@ -253,14 +243,12 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ConfirmMove -> {
                 if (_internalState.value.activeSheetState !is HomeSheetState.MovePicker) return
                 
-                val currentSelected = _internalState.value.selectedIds
+                val currentSelected = selectionManager.selectionState.value.selectedIds
                 
                 _internalState.update { 
                     it.copy(
                         isProcessing = true, 
-                        activeSheetState = HomeSheetState.None,
-                        isSelectionMode = false,
-                        selectedIds = persistentSetOf()
+                        activeSheetState = HomeSheetState.None
                     ) 
                 } 
                 
@@ -277,6 +265,7 @@ class HomeViewModel @Inject constructor(
                     )
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false) }
+                        selectionManager.clearSelection()
                     }
                 }
             }
@@ -318,12 +307,12 @@ class HomeViewModel @Inject constructor(
 
             is HomeAction.RemoveFromRecent -> viewModelScope.launch(Dispatchers.IO) {
                 removeRecentHistoryUseCase(action.items)
-                withContext(Dispatchers.Main) { _internalState.update { it.copy(isSelectionMode = false, selectedIds = persistentSetOf()) } }
+                withContext(Dispatchers.Main) { selectionManager.clearSelection() }
             }
 
             is HomeAction.UnfavoritePdfs -> viewModelScope.launch(Dispatchers.IO) {
                 action.pdfs.forEach { toggleFavoriteUseCase(it.id, false) }
-                withContext(Dispatchers.Main) { _internalState.update { it.copy(isSelectionMode = false, selectedIds = persistentSetOf()) } }
+                withContext(Dispatchers.Main) { selectionManager.clearSelection() }
             }
 
             is HomeAction.ToggleVaultStatus -> {

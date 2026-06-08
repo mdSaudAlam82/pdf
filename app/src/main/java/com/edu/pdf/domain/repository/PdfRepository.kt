@@ -53,6 +53,8 @@ interface PdfRepository {
     suspend fun getManagedPdfIdsFast(parentPath: String?, isVault: Boolean): List<String>
     suspend fun getPhysicalFolderPdfIdsFast(folderPath: String): List<String>
 
+    suspend fun getPdfByPath(path: String): PdfFile?
+    fun getPdfByPathFlow(path: String): Flow<PdfFile?>
     suspend fun markPdfsForWorker(pdfIds: List<String>, batchId: Long)
     suspend fun getPdfsForWorkerBatch(batchId: Long): List<PdfFile>
 }

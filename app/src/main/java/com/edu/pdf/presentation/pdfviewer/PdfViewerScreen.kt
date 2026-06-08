@@ -52,9 +52,15 @@ import kotlinx.coroutines.launch
 @Composable
 fun PdfViewerScreen(
     onBack: () -> Unit,
+    pdfPath: String? = null, // 🌟 NAYA: Support for Pane/Detail usage
     viewModel: PdfViewerViewModel = hiltViewModel(),
     ocrViewModel: com.edu.pdf.presentation.pdfviewer.ocr.OcrViewModel = hiltViewModel()
 ) {
+    LaunchedEffect(pdfPath) {
+        pdfPath?.let {
+            viewModel.onAction(PdfViewerAction.Initialize(it))
+        }
+    }
     val context = LocalContext.current
     val activity = context as? AppCompatActivity ?: return
 

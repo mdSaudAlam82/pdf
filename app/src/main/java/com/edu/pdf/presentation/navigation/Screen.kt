@@ -3,6 +3,7 @@ package com.edu.pdf.presentation.navigation
 import kotlinx.serialization.Serializable
 import com.edu.pdf.domain.model.FolderType
 
+@Serializable
 sealed interface Screen {
 
     @Serializable

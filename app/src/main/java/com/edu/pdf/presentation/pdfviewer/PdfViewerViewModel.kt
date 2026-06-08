@@ -20,8 +20,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
@@ -41,6 +43,7 @@ sealed interface PdfViewerEvent {
 }
 
 sealed interface PdfViewerAction {
+    data class Initialize(val path: String) : PdfViewerAction // 🌟 NAYA: For Pane support
     data class SetTopBarVisible(val visible: Boolean) : PdfViewerAction
     data object ToggleTopBar : PdfViewerAction
     data object ToggleNightMode : PdfViewerAction
@@ -89,11 +92,12 @@ class PdfViewerViewModel @Inject constructor(
             // 🌟 Use Case: Mark as opened
             markPdfAsOpenedUseCase(path)
 
-            // 🌟 ELITE FIX: Database se actual PdfFile object nikalo
-            repository.getAllPdfs(SortType.DATE_DESC).first().find { it.path == path }?.let { file ->
-                _uiState.update { it.copy(pdfFile = file) }
-            } ?: run {
-                // Agar DB me nahi hai (e.g. bahar se open kiya), toh path se construct karo
+            // 🌟 GOLD STANDARD O(1) LOOKUP: No more filtering large lists!
+            val pdfFile = repository.getPdfByPath(path)
+            if (pdfFile != null) {
+                _uiState.update { it.copy(pdfFile = pdfFile, pdfFileName = pdfFile.name) }
+            } else {
+                // If not in DB (e.g. opened from external), construct from path
                 val file = PdfFile(
                     id = path,
                     name = File(path).name,
@@ -101,13 +105,30 @@ class PdfViewerViewModel @Inject constructor(
                     sizeInBytes = File(path).length(),
                     lastModified = File(path).lastModified()
                 )
-                _uiState.update { it.copy(pdfFile = file) }
+                _uiState.update { it.copy(pdfFile = file, pdfFileName = file.name) }
             }
         }
+
+        // 🌟 REACTIVE UPDATE: Sync UI if metadata (like Favorite status) changes in DB
+        repository.getPdfByPathFlow(path)
+            .onEach { pdfFile ->
+                if (pdfFile != null) {
+                    _uiState.update { it.copy(pdfFile = pdfFile, pdfFileName = pdfFile.name) }
+                }
+            }
+            .launchIn(viewModelScope)
     }
 
     fun onAction(action: PdfViewerAction) {
         when (action) {
+            is PdfViewerAction.Initialize -> {
+                val path = action.path
+                val uri = if (path.startsWith("content://") || path.startsWith("file://")) path.toUri()
+                          else Uri.fromFile(File(path))
+                val fileName = File(path).nameWithoutExtension
+                _uiState.update { it.copy(pdfUri = uri, pdfFileName = fileName) }
+                loadAndMarkPdf(path)
+            }
             is PdfViewerAction.SetTopBarVisible -> _uiState.update { it.copy(isTopBarVisible = action.visible) }
             is PdfViewerAction.ToggleTopBar -> _uiState.update { it.copy(isTopBarVisible = !it.isTopBarVisible) }
             is PdfViewerAction.ToggleNightMode -> _uiState.update { it.copy(isNightMode = !it.isNightMode) }

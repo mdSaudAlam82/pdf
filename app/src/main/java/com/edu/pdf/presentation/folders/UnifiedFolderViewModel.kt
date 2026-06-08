@@ -45,9 +45,6 @@ sealed interface UnifiedFolderEvent {
 
 sealed interface UnifiedFolderAction {
     data class InitializeFolder(val id: String, val name: String, val type: FolderType) : UnifiedFolderAction
-    data class ToggleSelection(val id: String) : UnifiedFolderAction
-    data class SetSelectionMode(val enabled: Boolean) : UnifiedFolderAction
-    data class SelectAll(val ids: List<String>) : UnifiedFolderAction
     data class OpenSheet(val state: UnifiedFolderSheetState) : UnifiedFolderAction
     data object CloseSheet : UnifiedFolderAction
     data class OnTextInputChange(val text: String) : UnifiedFolderAction
@@ -75,8 +72,6 @@ data class UnifiedFolderUiState(
     val folders: ImmutableList<HomeItem.FolderItem> = persistentListOf(),
     val breadcrumbs: ImmutableList<Folder> = persistentListOf(),
     val foldersTree: ImmutableList<Folder> = persistentListOf(), 
-    val isSelectionMode: Boolean = false,
-    val selectedIds: PersistentSet<String> = persistentSetOf(),
     val isGridView: Boolean = false,
     val sortType: SortType = SortType.DATE_DESC,
     val activeSheetState: UnifiedFolderSheetState = UnifiedFolderSheetState.None,
@@ -99,7 +94,8 @@ class UnifiedFolderViewModel @Inject constructor(
     private val deletePdfsUseCase: DeletePdfsUseCase,
     private val deleteFolderUseCase: DeleteFolderUseCase,
     private val importPdfUseCase: ImportPdfUseCase,
-    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase
+    private val updateUserPreferencesUseCase: UpdateUserPreferencesUseCase,
+    private val selectionManager: com.edu.pdf.presentation.core.SelectionManager
 ) : ViewModel() {
 
     private val _currentFolderId = MutableStateFlow<String?>(null)
@@ -214,13 +210,6 @@ class UnifiedFolderViewModel @Inject constructor(
     fun onAction(action: UnifiedFolderAction) {
         when (action) {
             is UnifiedFolderAction.InitializeFolder -> initFolderData(action.id, action.name, action.type)
-            is UnifiedFolderAction.ToggleSelection -> {
-                val currentSelected = _internalState.value.selectedIds
-                val newSelection = if (currentSelected.contains(action.id)) currentSelected.remove(action.id) else currentSelected.add(action.id)
-                _internalState.update { it.copy(selectedIds = newSelection) }
-            }
-            is UnifiedFolderAction.SetSelectionMode -> _internalState.update { it.copy(isSelectionMode = action.enabled, selectedIds = if (!action.enabled) persistentSetOf() else it.selectedIds) }
-            is UnifiedFolderAction.SelectAll -> _internalState.update { it.copy(selectedIds = action.ids.toPersistentSet()) }
             is UnifiedFolderAction.SelectAllItems -> {
                 viewModelScope.launch(Dispatchers.IO) {
                     val type = _currentFolderType.value
@@ -236,9 +225,9 @@ class UnifiedFolderViewModel @Inject constructor(
                         repository.getManagedPdfIdsFast(id, isVault = type == FolderType.SECURE_VAULT)
                     }
 
-                    val allIds = (folderIds + pdfIds).toPersistentSet()
+                    val allIds = (folderIds + pdfIds)
                     withContext(Dispatchers.Main) {
-                        _internalState.update { it.copy(selectedIds = allIds) }
+                        selectionManager.selectAll(allIds)
                     }
                 }
             }
@@ -303,20 +292,21 @@ class UnifiedFolderViewModel @Inject constructor(
                     val pdfsToDelete = state.items.filterIsInstance<HomeItem.PdfItem>().map { it.pdf }
                     foldersToDelete.forEach { deleteFolderUseCase(it.folder.folderId) }
                     if (pdfsToDelete.isNotEmpty()) deletePdfsUseCase(pdfsToDelete)
-                    withContext(Dispatchers.Main) { _events.send(UnifiedFolderEvent.ClearMultiSelection); _internalState.update { it.copy(isProcessing = false) } }
+                    withContext(Dispatchers.Main) { 
+                        selectionManager.clearSelection()
+                        _internalState.update { it.copy(isProcessing = false) } 
+                    }
                 }
             }
             is UnifiedFolderAction.ConfirmMove -> {
                 if (_internalState.value.activeSheetState !is UnifiedFolderSheetState.MovePicker) return
                 
-                val currentSelected = _internalState.value.selectedIds
+                val currentSelected = selectionManager.selectionState.value.selectedIds
                 
                 _internalState.update { 
                     it.copy(
                         isProcessing = true, 
-                        activeSheetState = UnifiedFolderSheetState.None,
-                        isSelectionMode = false,
-                        selectedIds = persistentSetOf()
+                        activeSheetState = UnifiedFolderSheetState.None
                     ) 
                 }
 
@@ -333,6 +323,7 @@ class UnifiedFolderViewModel @Inject constructor(
                     )
                     withContext(Dispatchers.Main) {
                         _internalState.update { it.copy(isProcessing = false) }
+                        selectionManager.clearSelection()
                     }
                 }
             }

@@ -69,6 +69,8 @@ import com.edu.pdf.presentation.home.HomeAction
 import com.edu.pdf.presentation.home.components.SelectionTopBar
 import com.edu.pdf.presentation.home.components.UnifiedGridItem
 import com.edu.pdf.presentation.home.components.UnifiedListItem
+import com.edu.pdf.presentation.core.ShellViewModel
+import com.edu.pdf.presentation.core.ShellAction
 import com.edu.pdf.presentation.navigation.Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,7 +83,8 @@ fun UnifiedFolderScreen(
     onPdfClick: (String) -> Unit,
     onFolderNavigate: (String, String, FolderType) -> Unit,
     onBreadcrumbNavigate: (Folder?) -> Unit,
-    viewModel: UnifiedFolderViewModel = hiltViewModel(viewModelStoreOwner = androidx.activity.compose.LocalActivity.current as androidx.lifecycle.ViewModelStoreOwner)
+    viewModel: UnifiedFolderViewModel = hiltViewModel(viewModelStoreOwner = androidx.activity.compose.LocalActivity.current as androidx.lifecycle.ViewModelStoreOwner),
+    shellViewModel: ShellViewModel = hiltViewModel(viewModelStoreOwner = androidx.activity.compose.LocalActivity.current as androidx.lifecycle.ViewModelStoreOwner)
 ) {
     LaunchedEffect(folderId, folderName, folderType) {
         if (folderId != null && folderName != null && folderType != null) {
@@ -90,10 +93,11 @@ fun UnifiedFolderScreen(
     }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val shellState by shellViewModel.uiState.collectAsStateWithLifecycle()
     val pagedPdfs = viewModel.pagedPdfsFlow.collectAsLazyPagingItems()
 
-    val isSelectionMode = uiState.isSelectionMode
-    val selectedPdfs = uiState.selectedIds
+    val isSelectionMode = shellState.isSelectionMode
+    val selectedPdfs = shellState.selectedIds
 
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -104,7 +108,7 @@ fun UnifiedFolderScreen(
             viewModel.events.collect { event ->
                 when (event) {
                     is UnifiedFolderEvent.ShowSnackbar -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
-                    is UnifiedFolderEvent.ClearMultiSelection -> viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
+                    is UnifiedFolderEvent.ClearMultiSelection -> shellViewModel.onAction(ShellAction.ClearSelection)
                 }
             }
         }
@@ -137,13 +141,13 @@ fun UnifiedFolderScreen(
         uri?.let { viewModel.onAction(UnifiedFolderAction.ImportFile(it.toString())) }
     }
     BackHandler(enabled = isSelectionMode) {
-        viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false))
+        shellViewModel.onAction(ShellAction.ClearSelection)
     }
     val onLongPressEnableSelection: (String) -> Unit = { id ->
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (!isSelectionMode) {
-            viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
-            if (!selectedPdfs.contains(id)) viewModel.onAction(UnifiedFolderAction.ToggleSelection(id))
+            shellViewModel.onAction(ShellAction.SetSelectionMode(true))
+            if (!selectedPdfs.contains(id)) shellViewModel.onAction(ShellAction.ToggleSelection(id))
         }
     }
 
@@ -157,11 +161,11 @@ fun UnifiedFolderScreen(
             SelectionTopBar(
                 selectedCount = selectedPdfs.size,
                 isAllSelected = isAllSelected,
-                onClearSelection = { viewModel.onAction(UnifiedFolderAction.SetSelectionMode(false)) },
+                onClearSelection = { shellViewModel.onAction(ShellAction.ClearSelection) },
                 onSelectAllToggle = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     if (isAllSelected) {
-                        viewModel.onAction(UnifiedFolderAction.SelectAll(emptyList()))
+                        shellViewModel.onAction(ShellAction.ClearSelection)
                     } else {
                         viewModel.onAction(UnifiedFolderAction.SelectAllItems)
                     }
@@ -188,7 +192,7 @@ fun UnifiedFolderScreen(
                 showToggleView = !isEmpty, 
                 showSelectAll = !isEmpty,
                 onSelectAllClick = {
-                    viewModel.onAction(UnifiedFolderAction.SetSelectionMode(true))
+                    shellViewModel.onAction(ShellAction.SetSelectionMode(true))
                     viewModel.onAction(UnifiedFolderAction.SelectAllItems)
                 },
                 onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
@@ -237,7 +241,9 @@ fun UnifiedFolderScreen(
                                         viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
                                     }
                                 },
-                                onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
+                                onToggleSelection = { id -> shellViewModel.onAction(ShellAction.ToggleSelection(id)) }, 
+                                onLongPress = onLongPressEnableSelection,
+                                modifier = Modifier.animateItem()
                             )
                         }
 
@@ -253,7 +259,9 @@ fun UnifiedFolderScreen(
                                             viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
                                         }
                                     },
-                                    onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
+                                    onToggleSelection = { id -> shellViewModel.onAction(ShellAction.ToggleSelection(id)) }, 
+                                    onLongPress = onLongPressEnableSelection,
+                                    modifier = Modifier.animateItem()
                                 )
                             }
                         }
@@ -270,7 +278,9 @@ fun UnifiedFolderScreen(
                                         viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(folder)))
                                     }
                                 },
-                                onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
+                                onToggleSelection = { id -> shellViewModel.onAction(ShellAction.ToggleSelection(id)) }, 
+                                onLongPress = onLongPressEnableSelection,
+                                modifier = Modifier.animateItem()
                             )
                         }
 
@@ -286,7 +296,9 @@ fun UnifiedFolderScreen(
                                             viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.ItemMenu(pdfItem)))
                                         }
                                     },
-                                    onToggleSelection = { id -> viewModel.onAction(UnifiedFolderAction.ToggleSelection(id)) }, onLongPress = onLongPressEnableSelection
+                                    onToggleSelection = { id -> shellViewModel.onAction(ShellAction.ToggleSelection(id)) }, 
+                                    onLongPress = onLongPressEnableSelection,
+                                    modifier = Modifier.animateItem()
                                 )
                             }
                         }
@@ -333,7 +345,9 @@ private fun ProEmptyStateCard(title: String, icon: ImageVector, iconTint: Color,
 fun NavGraphBuilder.foldersSection(
     navController: NavHostController,
     isTablet: Boolean,
-    unifiedViewModel: UnifiedFolderViewModel
+    unifiedViewModel: UnifiedFolderViewModel,
+    shellViewModel: ShellViewModel,
+    onPdfClickOverride: ((String) -> Unit)? = null
 ) {
     composable<Screen.Folders> {
         FoldersScreen(
@@ -356,7 +370,7 @@ fun NavGraphBuilder.foldersSection(
                     // 1. अगर आप Folders टैब से आए हैं, तो पूरा नेविगेशन काटकर वापस Folders पर जाएं
                     val poppedToFolders = navController.popBackStack(Screen.Folders, inclusive = false)
 
-                    // 2. अगर Folders नहीं मिला (मतलब आप Home टैब से आए थे), तो पूरा काटकर Home पर जाएं
+                    // 2. अगर Folders नहीं मिला (मतलब आप Home टैब से आए थी), तो पूरा काटकर Home पर जाएं
                     if (!poppedToFolders) {
                         val poppedToHome = navController.popBackStack(Screen.Home, inclusive = false)
 
@@ -372,7 +386,11 @@ fun NavGraphBuilder.foldersSection(
                 }
             },
             onPdfClick = { path ->
-                navController.navigate(Screen.PdfViewer(pdfPath = path))
+                if (onPdfClickOverride != null) {
+                    onPdfClickOverride(path)
+                } else {
+                    navController.navigate(Screen.PdfViewer(pdfPath = path))
+                }
             },
             onFolderNavigate = { id, name, type ->
                 val encodedId = Uri.encode(id)
@@ -386,7 +404,8 @@ fun NavGraphBuilder.foldersSection(
                     navController.navigate(Screen.UnifiedFolder(folderId = encodedId, folderName = folder.name, folderType = route.folderType))
                 }
             },
-            viewModel = unifiedViewModel
+            viewModel = unifiedViewModel,
+            shellViewModel = shellViewModel
         )
     }
 }

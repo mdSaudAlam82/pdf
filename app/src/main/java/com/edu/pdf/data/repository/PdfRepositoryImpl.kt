@@ -244,6 +244,9 @@ class PdfRepositoryImpl @Inject constructor(
     override suspend fun getManagedPdfIdsFast(parentPath: String?, isVault: Boolean) = pdfDao.getManagedPdfIdsFast(parentPath, isVault)
     override suspend fun getPhysicalFolderPdfIdsFast(folderPath: String) = pdfDao.getPhysicalFolderPdfIdsFast(folderPath)
 
+    override suspend fun getPdfByPath(path: String): PdfFile? = pdfDao.getPdfByPath(path)?.toDomainModel()
+    override fun getPdfByPathFlow(path: String): Flow<PdfFile?> = pdfDao.getPdfByPathFlow(path).map { it?.toDomainModel() }
+
     override suspend fun markPdfsForWorker(pdfIds: List<String>, batchId: Long) = pdfDao.markPdfsForWorker(pdfIds, batchId)
     override suspend fun getPdfsForWorkerBatch(batchId: Long): List<PdfFile> = pdfDao.getPdfsByWorkerBatchId(batchId).map { it.toDomainModel() }
 }
