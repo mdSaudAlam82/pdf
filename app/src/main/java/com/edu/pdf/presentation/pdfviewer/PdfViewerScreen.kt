@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
 import android.view.ViewConfiguration
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedVisibility
@@ -69,11 +70,6 @@ fun PdfViewerScreen(
 
     var showAiChat by remember { mutableStateOf(false) }
     var currentCapturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var showActionSheet by remember { mutableStateOf(false) }
-
-    var showMovePicker by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
-    var renameInput by remember { mutableStateOf("") }
 
     val pdfUri = uiState.pdfUri
     val window = activity.window
@@ -204,7 +200,7 @@ fun PdfViewerScreen(
                         }) {
                             Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurface)
                         }
-                        IconButton(onClick = { showActionSheet = true }) {
+                        IconButton(onClick = { viewModel.onAction(PdfViewerAction.OpenSheet(PdfViewerSheetState.MoreActions)) }) {
                             Icon(
                                 imageVector = Icons.Default.MoreVert,
                                 contentDescription = "More Options",
@@ -275,6 +271,7 @@ fun PdfViewerScreen(
                                 var pdfFragment = fragmentManager.findFragmentById(containerId) as? PdfViewerFragment
                                 if (pdfFragment == null) {
                                     pdfFragment = PdfViewerFragment()
+                                    // 🌟 TABLET MASTERY: Stylus support hint
                                     fragmentManager.beginTransaction()
                                         .replace(containerId, pdfFragment)
                                         .commitAllowingStateLoss()
@@ -332,104 +329,110 @@ fun PdfViewerScreen(
                 }
             )
 
-            if (showActionSheet && uiState.pdfFile != null) {
-                PdfActionBottomSheet(
-                    pdf = uiState.pdfFile!!,
-                    onDismiss = { showActionSheet = false },
-
-                    onShare = {
-                        showActionSheet = false
-                        try {
-                            uiState.pdfUri?.let { uri ->
-                                if (uri.scheme == "file") {
-                                    val builder = android.os.StrictMode.VmPolicy.Builder()
-                                    android.os.StrictMode.setVmPolicy(builder.build())
+            // 🌟 PURE MVI: UI is strictly driven by ViewModel's activeSheetState
+            when (val sheetState = uiState.activeSheetState) {
+                is PdfViewerSheetState.MoreActions -> {
+                    if (uiState.pdfFile != null) {
+                        PdfActionBottomSheet(
+                            pdf = uiState.pdfFile!!,
+                            onDismiss = { viewModel.onAction(PdfViewerAction.CloseSheet) },
+                            onShare = {
+                                viewModel.onAction(PdfViewerAction.CloseSheet)
+                                sharePdf(context, uiState.pdfUri)
+                            },
+                            onFavoriteToggle = {
+                                viewModel.onAction(PdfViewerAction.ToggleFavorite(!uiState.pdfFile!!.isFavorite))
+                            },
+                            onDelete = {
+                                viewModel.onAction(PdfViewerAction.OpenSheet(PdfViewerSheetState.DeleteConfirmation))
+                            },
+                            onActionClick = { action ->
+                                when (action) {
+                                    "Rename" -> viewModel.onAction(PdfViewerAction.OpenSheet(PdfViewerSheetState.RenameDialog(uiState.pdfFileName)))
+                                    "Move to" -> viewModel.onAction(PdfViewerAction.OpenSheet(PdfViewerSheetState.MovePicker))
+                                    "Move to Vault", "Remove from Vault" -> viewModel.onAction(PdfViewerAction.ToggleVaultStatus)
+                                    "Print" -> viewModel.onAction(PdfViewerAction.PrintFile(context))
+                                    else -> Toast.makeText(context, "$action coming soon!", Toast.LENGTH_SHORT).show()
                                 }
-
-                                val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                    type = "application/pdf"
-                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(android.content.Intent.createChooser(shareIntent, "Share PDF"))
                             }
-                        } catch (_: Exception) {
-                            android.widget.Toast.makeText(context, "Error: Unable to share file", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    },
-
-                    onFavoriteToggle = {
-                        viewModel.onAction(PdfViewerAction.ToggleFavorite(!uiState.pdfFile!!.isFavorite))
-                    },
-
-                    onDelete = {
-                        showActionSheet = false
-                        viewModel.onAction(PdfViewerAction.DeleteFile)
-                    },
-
-                    onActionClick = { action ->
-                        showActionSheet = false
-                        when (action) {
-                            "Rename" -> {
-                                renameInput = uiState.pdfFileName
-                                showRenameDialog = true
-                            }
-                            "Move to" -> {
-                                showMovePicker = true
-                            }
-                            "Move to Vault", "Remove from Vault" -> {
-                                viewModel.onAction(PdfViewerAction.ToggleVaultStatus)
-                            }
-                            "Print" -> {
-                                viewModel.onAction(PdfViewerAction.PrintFile(context))
-                            }
-                            else -> {
-                                android.widget.Toast.makeText(context, "$action coming soon!", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
-            }
-
-            if (showMovePicker) {
-                com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
-                    folders = emptyList(),
-                    onDismiss = { showMovePicker = false },
-                    onTargetSelected = { targetId ->
-                        viewModel.onAction(PdfViewerAction.MoveToFolder(targetId))
-                    }
-                )
-            }
-
-            if (showRenameDialog) {
-                androidx.compose.material3.AlertDialog(
-                    onDismissRequest = { showRenameDialog = false },
-                    title = { androidx.compose.material3.Text("Rename PDF") },
-                    text = {
-                        androidx.compose.material3.TextField(
-                            value = renameInput,
-                            onValueChange = { renameInput = it },
-                            placeholder = { androidx.compose.material3.Text("Enter new name") }
                         )
-                    },
-                    confirmButton = {
-                        androidx.compose.material3.TextButton(onClick = {
-                            if (renameInput.isNotBlank()) {
-                                viewModel.onAction(PdfViewerAction.RenameFile(renameInput))
-                            }
-                            showRenameDialog = false
-                        }) {
-                            androidx.compose.material3.Text("OK")
-                        }
-                    },
-                    dismissButton = {
-                        androidx.compose.material3.TextButton(onClick = { showRenameDialog = false }) {
-                            androidx.compose.material3.Text("Cancel")
-                        }
                     }
-                )
+                }
+
+                is PdfViewerSheetState.MovePicker -> {
+                    com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
+                        folders = emptyList(),
+                        onDismiss = { viewModel.onAction(PdfViewerAction.CloseSheet) },
+                        onTargetSelected = { targetId ->
+                            viewModel.onAction(PdfViewerAction.MoveToFolder(targetId))
+                        }
+                    )
+                }
+
+                is PdfViewerSheetState.RenameDialog -> {
+                    AlertDialog(
+                        onDismissRequest = { viewModel.onAction(PdfViewerAction.CloseSheet) },
+                        title = { Text("Rename PDF") },
+                        text = {
+                            TextField(
+                                value = uiState.renameInput,
+                                onValueChange = { viewModel.onAction(PdfViewerAction.UpdateRenameInput(it)) },
+                                placeholder = { Text("Enter new name") }
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { viewModel.onAction(PdfViewerAction.ConfirmRename) }) {
+                                Text("OK")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { viewModel.onAction(PdfViewerAction.CloseSheet) }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
+
+                is PdfViewerSheetState.DeleteConfirmation -> {
+                    AlertDialog(
+                        onDismissRequest = { viewModel.onAction(PdfViewerAction.CloseSheet) },
+                        title = { Text("Delete File?") },
+                        text = { Text("Are you sure you want to permanently delete this PDF?") },
+                        confirmButton = {
+                            Button(
+                                onClick = { viewModel.onAction(PdfViewerAction.ConfirmDelete) },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) { Text("Delete", color = MaterialTheme.colorScheme.onError) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { viewModel.onAction(PdfViewerAction.CloseSheet) }) { Text("Cancel") }
+                        }
+                    )
+                }
+
+                PdfViewerSheetState.None -> {}
             }
         }
+    }
+}
+
+// 🌟 Helper for Share
+private fun sharePdf(context: android.content.Context, uri: android.net.Uri?) {
+    try {
+        uri?.let { u ->
+            if (u.scheme == "file") {
+                val builder = android.os.StrictMode.VmPolicy.Builder()
+                android.os.StrictMode.setVmPolicy(builder.build())
+            }
+            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(android.content.Intent.EXTRA_STREAM, u)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(shareIntent, "Share PDF"))
+        }
+    } catch (_: Exception) {
+        android.widget.Toast.makeText(context, "Error: Unable to share file", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 

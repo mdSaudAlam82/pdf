@@ -67,12 +67,9 @@ fun SearchScreen(
 
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    var showMovePickerByPdf by remember { mutableStateOf<PdfFile?>(null) }
 
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
-    var selectedPdfForMenu by remember { mutableStateOf<PdfFile?>(null) }
-    var renameDialogPdf by remember { mutableStateOf<PdfFile?>(null) }
 
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -181,7 +178,7 @@ fun SearchScreen(
                                     keyboardController?.hide()
                                     focusManager.clearFocus()
                                     delay(200)
-                                    selectedPdfForMenu = pdf
+                                    viewModel.onAction(SearchAction.OpenSheet(SearchSheetState.PdfMenu(pdf)))
                                 }
                             }
                         )
@@ -190,146 +187,133 @@ fun SearchScreen(
             }
         }
 
-        selectedPdfForMenu?.let { pdf ->
-            PdfActionBottomSheet(
-                pdf = pdf,
-                onDismiss = { selectedPdfForMenu = null },
-                onFavoriteToggle = {
-                    viewModel.onAction(SearchAction.ToggleFavorite(pdf))
-                    selectedPdfForMenu = null
-                },
-                onShare = {
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = "application/pdf"
-                        putExtra(Intent.EXTRA_STREAM, pdf.id.toUri())
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        when (val sheetState = uiState.activeSheetState) {
+            is SearchSheetState.PdfMenu -> {
+                PdfActionBottomSheet(
+                    pdf = sheetState.pdf,
+                    onDismiss = { viewModel.onAction(SearchAction.CloseSheet) },
+                    onFavoriteToggle = {
+                        viewModel.onAction(SearchAction.ToggleFavorite(sheetState.pdf))
+                    },
+                    onShare = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/pdf"
+                            putExtra(Intent.EXTRA_STREAM, sheetState.pdf.id.toUri())
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share PDF"))
+                        viewModel.onAction(SearchAction.CloseSheet)
+                    },
+                    onDelete = {
+                        viewModel.onAction(SearchAction.OpenSheet(SearchSheetState.DeleteConfirmation(sheetState.pdf)))
+                    },
+                    onActionClick = { actionTitle ->
+                        when (actionTitle) {
+                            "Rename" -> {
+                                val baseName = sheetState.pdf.name.removeSuffix(".pdf").removeSuffix(".PDF")
+                                viewModel.onAction(SearchAction.OpenSheet(SearchSheetState.RenameDialog(sheetState.pdf, baseName)))
+                            }
+                            "Move to" -> {
+                                viewModel.onAction(SearchAction.OpenSheet(SearchSheetState.MovePicker(sheetState.pdf)))
+                            }
+                            "Move to Vault", "Remove from Vault" -> {
+                                viewModel.onAction(SearchAction.ToggleVaultStatus(sheetState.pdf))
+                                viewModel.onAction(SearchAction.CloseSheet)
+                            }
+                            else -> {
+                                Toast.makeText(context, "Coming soon!", Toast.LENGTH_SHORT).show()
+                                viewModel.onAction(SearchAction.CloseSheet)
+                            }
+                        }
                     }
-                    context.startActivity(Intent.createChooser(shareIntent, "Share PDF"))
-                    selectedPdfForMenu = null
-                },
-                onDelete = {
-                    viewModel.onAction(SearchAction.ShowDeleteConfirmation(pdf))
-                    selectedPdfForMenu = null
-                },
-                onActionClick = { actionTitle ->
-                    when (actionTitle) {
-                        "Rename" -> {
-                            renameDialogPdf = pdf
-                            selectedPdfForMenu = null
-                        }
-                        "Move to" -> {
-                            showMovePickerByPdf = pdf
-                            selectedPdfForMenu = null
-                        }
-                        "Move to Vault", "Remove from Vault" -> {
-                            viewModel.onAction(SearchAction.ToggleVaultStatus(pdf))
-                            selectedPdfForMenu = null
-                        }
-                        else -> {
-                            Toast.makeText(context, "Coming soon!", Toast.LENGTH_SHORT).show()
-                            selectedPdfForMenu = null
-                        }
-                    }
-                }
-            )
-        }
-
-        val movePdf = showMovePickerByPdf
-        if (movePdf != null) {
-            com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
-                onDismiss = { showMovePickerByPdf = null },
-                onTargetSelected = { targetId ->
-                    viewModel.onAction(SearchAction.MoveToFolder(movePdf, targetId))
-                }
-            )
-        }
-
-        val pdfToRename = renameDialogPdf
-        if (pdfToRename != null) {
-            val focusRequesterDialog = remember { FocusRequester() }
-            val baseName = pdfToRename.name.removeSuffix(".pdf").removeSuffix(".PDF")
-            var hasRequestedFocus by remember { mutableStateOf(false) }
-
-            var renameTextFieldValue by remember {
-                mutableStateOf(
-                    TextFieldValue(
-                        text = baseName,
-                        selection = TextRange(0, baseName.length)
-                    )
                 )
             }
 
-            AlertDialog(
-                onDismissRequest = { renameDialogPdf = null },
-                title = { Text("Rename File", fontWeight = FontWeight.Bold) },
-                text = {
-                    OutlinedTextField(
-                        value = renameTextFieldValue,
-                        onValueChange = { renameTextFieldValue = it },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(focusRequesterDialog)
-                            .onGloballyPositioned {
-                                if (!hasRequestedFocus) {
-                                    focusRequesterDialog.requestFocus()
-                                    keyboardController?.show()
-                                    hasRequestedFocus = true
-                                }
-                            },
-                        shape = RoundedCornerShape(12.dp),
-                        trailingIcon = {
-                            if (renameTextFieldValue.text.isNotEmpty()) {
-                                IconButton(onClick = {
-                                    renameTextFieldValue = TextFieldValue("", TextRange.Zero)
-                                }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear text")
-                                }
-                            }
-                        }
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            keyboardController?.hide()
-                            if (renameTextFieldValue.text.isNotBlank()) {
-                                viewModel.onAction(SearchAction.RenamePdf(pdfToRename, renameTextFieldValue.text))
-                                renameDialogPdf = null
-                            }
-                        }
-                    ) { Text("Rename") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { renameDialogPdf = null }) { Text("Cancel") }
-                }
-            )
-        }
-
-        val pdfToDelete = uiState.pdfToDelete
-        if (pdfToDelete != null) {
-            AlertDialog(
-                onDismissRequest = { viewModel.onAction(SearchAction.DismissDeleteConfirmation) },
-                title = { Text("Delete File?", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
-                text = {
-                    Text(
-                        "Are you sure you want to permanently delete '${pdfToDelete.name}'? This action cannot be undone.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { viewModel.onAction(SearchAction.ConfirmDeletePdf) },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) { Text("Delete", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { viewModel.onAction(SearchAction.DismissDeleteConfirmation) }) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            is SearchSheetState.MovePicker -> {
+                com.edu.pdf.presentation.common.picker.MovePickerSheetRoute(
+                    onDismiss = { viewModel.onAction(SearchAction.CloseSheet) },
+                    onTargetSelected = { targetId ->
+                        viewModel.onAction(SearchAction.MoveToFolder(sheetState.pdf, targetId))
                     }
-                },
-                containerColor = MaterialTheme.colorScheme.surface
-            )
+                )
+            }
+
+            is SearchSheetState.RenameDialog -> {
+                val focusRequesterDialog = remember { FocusRequester() }
+                var hasRequestedFocus by remember { mutableStateOf(false) }
+
+                AlertDialog(
+                    onDismissRequest = { viewModel.onAction(SearchAction.CloseSheet) },
+                    title = { Text("Rename File", fontWeight = FontWeight.Bold) },
+                    text = {
+                        OutlinedTextField(
+                            value = uiState.renameInput,
+                            onValueChange = { viewModel.onAction(SearchAction.UpdateRenameInput(it)) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequesterDialog)
+                                .onGloballyPositioned {
+                                    if (!hasRequestedFocus) {
+                                        focusRequesterDialog.requestFocus()
+                                        keyboardController?.show()
+                                        hasRequestedFocus = true
+                                    }
+                                },
+                            shape = RoundedCornerShape(12.dp),
+                            trailingIcon = {
+                                if (uiState.renameInput.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        viewModel.onAction(SearchAction.UpdateRenameInput(""))
+                                    }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear text")
+                                    }
+                                }
+                            }
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                keyboardController?.hide()
+                                if (uiState.renameInput.isNotBlank()) {
+                                    viewModel.onAction(SearchAction.ConfirmRename)
+                                }
+                            }
+                        ) { Text("Rename") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.onAction(SearchAction.CloseSheet) }) { Text("Cancel") }
+                    }
+                )
+            }
+
+            is SearchSheetState.DeleteConfirmation -> {
+                AlertDialog(
+                    onDismissRequest = { viewModel.onAction(SearchAction.CloseSheet) },
+                    title = { Text("Delete File?", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
+                    text = {
+                        Text(
+                            "Are you sure you want to permanently delete '${sheetState.pdf.name}'? This action cannot be undone.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { viewModel.onAction(SearchAction.ConfirmDeletePdf) },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) { Text("Delete", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.onAction(SearchAction.CloseSheet) }) {
+                            Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            }
+
+            SearchSheetState.None -> {}
         }
     }
 }

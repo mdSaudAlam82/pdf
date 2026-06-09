@@ -140,9 +140,8 @@ fun UnifiedFolderScreen(
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { viewModel.onAction(UnifiedFolderAction.ImportFile(it.toString())) }
     }
-    BackHandler(enabled = isSelectionMode) {
-        shellViewModel.onAction(ShellAction.ClearSelection)
-    }
+    // Selection handled by Global BackHandler in MainAppScreen
+
     val onLongPressEnableSelection: (String) -> Unit = { id ->
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (!isSelectionMode) {
@@ -197,7 +196,8 @@ fun UnifiedFolderScreen(
                 },
                 onSortClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.SortPicker)) },
                 onToggleView = { viewModel.onAction(UnifiedFolderAction.ToggleViewMode) },
-                onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) }
+                onCreateFolderClick = { viewModel.onAction(UnifiedFolderAction.OpenSheet(UnifiedFolderSheetState.CreateFolderDialog(uiState.folderId))) },
+                scrollBehavior = androidx.compose.material3.TopAppBarDefaults.enterAlwaysScrollBehavior() // 🌟 Fix for scroll lag
             )
         }
 
@@ -227,7 +227,7 @@ fun UnifiedFolderScreen(
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 110.dp),
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp),
+                        contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
@@ -267,7 +267,7 @@ fun UnifiedFolderScreen(
                         }
                     }
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
+                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                         items(items = uiState.folders, key = { it.folder.folderId }) { folder ->
                             UnifiedListItem(
                                 item = folder, isSelectionMode = isSelectionMode, selectedPdfs = selectedPdfs,

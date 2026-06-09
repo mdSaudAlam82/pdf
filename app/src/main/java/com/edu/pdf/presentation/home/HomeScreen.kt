@@ -90,10 +90,9 @@ fun HomeScreenWrapper(
             isRefreshing = uiState.isRefreshing,
             pagedPdfs = pagedPdfs,
             onSearchClick = onSearchClick,
-            onSelectionModeChange = { enabled -> shellViewModel.onAction(ShellAction.SetSelectionMode(enabled)) },
-            onToggleSelection = { id -> shellViewModel.onAction(ShellAction.ToggleSelection(id)) },
-            onSelectAll = { ids -> shellViewModel.onAction(ShellAction.SelectAll(ids)) },
-            onAction = viewModel::onAction,
+                onSelectionModeChange = { enabled -> shellViewModel.onAction(ShellAction.SetSelectionMode(enabled)) },
+                onToggleSelection = { id -> shellViewModel.onAction(ShellAction.ToggleSelection(id)) },
+                onAction = viewModel::onAction,
             onShellAction = shellViewModel::onAction,
             viewModel = viewModel
         )
@@ -111,7 +110,6 @@ fun HomeScreenPure(
     onSearchClick: () -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
     onToggleSelection: (String) -> Unit,
-    onSelectAll: (List<String>) -> Unit,
     onAction: (HomeAction) -> Unit,
     onShellAction: (ShellAction) -> Unit,
     viewModel: HomeViewModel
@@ -139,10 +137,7 @@ fun HomeScreenPure(
         }
     }
 
-    BackHandler(enabled = isSelectionMode) {
-        onSelectAll(emptyList())
-        onSelectionModeChange(false)
-    }
+    // Selection handled by Global BackHandler in MainAppScreen
 
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
 
@@ -223,7 +218,7 @@ fun HomeScreenPure(
             isSelectionMode = isSelectionMode,
             selectedPdfs = selectedPdfs,
             pagedPdfs = pagedPdfs,
-            paddingValues = PaddingValues(0.dp),
+            paddingValues = PaddingValues(0.dp), // 🌟 Handled by Shell NavHost
             pagerState = pagerState,
             onAction = onAction,
             onToggleSelection = onToggleSelection,

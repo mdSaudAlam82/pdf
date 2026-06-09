@@ -10,10 +10,17 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.ui.Alignment
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.expandIn
+import androidx.compose.animation.shrinkOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -35,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -127,6 +135,35 @@ fun MainAppScreen(
 
     val isHomeRoute = destination?.hasRoute<Screen.Home>() == true
     val isFolderRoute = destination?.hasRoute<Screen.UnifiedFolder>() == true
+    val isFoldersTabRoute = destination?.hasRoute<Screen.Folders>() == true
+    val isToolsRoute = destination?.hasRoute<Screen.Tools>() == true
+    val isSettingsRoute = destination?.hasRoute<Screen.Settings>() == true
+
+    // 🚀 THE GLOBAL BACK HANDLER: Clears selection before screen navigation
+    BackHandler(enabled = shellState.isSelectionMode) {
+        shellViewModel.onAction(ShellAction.ClearSelection)
+    }
+
+    // 🚀 THE BOTTOM BAR VISIBILITY ENGINE: Strictly reactive to routes
+    LaunchedEffect(destination) {
+        // VIP Tabs that SHOULD show bottom bar
+        val isMainTab = isHomeRoute || isFoldersTabRoute || isToolsRoute || isSettingsRoute
+        
+        // Screens that MUST hide bottom bar
+        val isViewer = destination?.hasRoute<Screen.PdfViewer>() == true
+        val isSearch = destination?.hasRoute<Screen.Search>() == true
+        val isPermission = destination?.hasRoute<Screen.Permission>() == true
+        val isUnifiedFolder = destination?.hasRoute<Screen.UnifiedFolder>() == true
+        
+        val shouldShow = isMainTab && !isViewer && !isSearch && !isPermission && !isUnifiedFolder
+        
+        // 🌟 GOLD STANDARD FIX: Delay bottom bar visibility slightly when navigating BACK 
+        // to match the screen exit animation and prevent "jumping".
+        if (shouldShow && !shellState.isBottomBarVisible) {
+            kotlinx.coroutines.delay(200) 
+        }
+        shellViewModel.onAction(ShellAction.SetBottomBarVisible(shouldShow))
+    }
 
     // 🚀 THE "STICKY" MASTER SELECTION: Integrated with ShellViewModel
     val selectedItems = remember(
@@ -151,7 +188,6 @@ fun MainAppScreen(
             destination?.hasRoute<Screen.Permission>() == true ||
             destination?.hasRoute<Screen.Search>() == true
 
-    val shouldShowShellBar = if (isFolderRoute) shellState.isSelectionMode || shellState.isBottomBarVisible else !isTablet && !isFullScreen
 
     Row(modifier = Modifier.fillMaxSize()) {
         if (isTablet && !isFullScreen) {
@@ -161,15 +197,16 @@ fun MainAppScreen(
         Scaffold(
             modifier = Modifier.weight(1f),
             contentWindowInsets = WindowInsets(0.dp),
-            bottomBar = {
-                // Bottom bar logic (unchanged for now, but should ideally be hideable if detail pane is full screen)
-                val isDetailVisible = selectedPdfPath != null && isTablet
-                AnimatedVisibility(
-                    visible = shouldShowShellBar && !isDetailVisible,
-                    enter = slideInVertically(animationSpec = tween(150)) { it } + fadeIn(tween(100)),
-                    exit = slideOutVertically(animationSpec = tween(150)) { it } + fadeOut(tween(100)),
-                    label = "ShellBarVisibility"
-                ) {
+                bottomBar = {
+                    val isSelectionActive = shellState.isSelectionMode
+                    AnimatedVisibility(
+                        visible = shellState.isBottomBarVisible || isSelectionActive,
+                        enter = fadeIn(tween(250, easing = FastOutSlowInEasing)) + 
+                                expandIn(animationSpec = tween(250), expandFrom = Alignment.BottomCenter),
+                        exit = fadeOut(tween(200)) + 
+                               shrinkOut(animationSpec = tween(200), shrinkTowards = Alignment.BottomCenter),
+                        label = "ShellBarVisibility"
+                    ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -211,30 +248,21 @@ fun MainAppScreen(
                     NavHost(
                         navController = navController,
                         startDestination = startScreen,
-                        modifier = Modifier.fillMaxSize().padding(top = paddingValues.calculateTopPadding()),
-                        enterTransition = {
-                            slideInHorizontally(
-                                initialOffsetX = { it },
-                                animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioLowBouncy)
-                            ) + fadeIn()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(paddingValues)
+                            .consumeWindowInsets(paddingValues),
+                        enterTransition = { 
+                            slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) + fadeIn(tween(300))
                         },
-                        exitTransition = {
-                            slideOutHorizontally(
-                                targetOffsetX = { -it },
-                                animationSpec = spring(stiffness = Spring.StiffnessLow)
-                            ) + fadeOut()
+                        exitTransition = { 
+                            slideOutHorizontally(targetOffsetX = { -it / 3 }, animationSpec = tween(300)) + fadeOut(tween(300))
                         },
-                        popEnterTransition = {
-                            slideInHorizontally(
-                                initialOffsetX = { -it },
-                                animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioLowBouncy)
-                            ) + fadeIn()
+                        popEnterTransition = { 
+                            slideInHorizontally(initialOffsetX = { -it / 3 }, animationSpec = tween(300)) + fadeIn(tween(300))
                         },
-                        popExitTransition = {
-                            slideOutHorizontally(
-                                targetOffsetX = { it },
-                                animationSpec = spring(stiffness = Spring.StiffnessLow)
-                            ) + fadeOut()
+                        popExitTransition = { 
+                            slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) + fadeOut(tween(300))
                         }
                     ) {
                         composable<Screen.Permission> {
@@ -287,6 +315,7 @@ fun MainAppScreen(
                 selectedPdfPath = selectedPdfPath,
                 onPdfSelected = { selectedPdfPath = it },
                 onBack = { selectedPdfPath = null },
+                isTablet = isTablet,
                 modifier = Modifier.fillMaxSize()
             )
         }

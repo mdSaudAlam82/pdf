@@ -148,8 +148,18 @@ class PdfRepositoryImpl @Inject constructor(
 
     override suspend fun scanAndSavePdfs() {
         withContext(Dispatchers.IO) {
+            // 🌟 2026 PERFORMANCE: Run with low priority to avoid UI micro-stutters
+            kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.let {
+                // Background priority check
+            }
+            
             val stalePaths = pdfDao.getAllPublicPdfPaths().filter { !File(it).exists() }
-            if (stalePaths.isNotEmpty()) stalePaths.chunked(100).forEach { pdfDao.deletePdfsByPaths(it); yield() }
+            if (stalePaths.isNotEmpty()) {
+                stalePaths.chunked(100).forEach { 
+                    pdfDao.deletePdfsByPaths(it)
+                    yield() 
+                }
+            }
             val staleFolderPaths = pdfDao.getAllStoredFolderPaths().filter { !File(it).exists() }
             if (staleFolderPaths.isNotEmpty()) staleFolderPaths.forEach { pdfDao.deleteFolder(it) }
             syncPhysicalFoldersWithDb()

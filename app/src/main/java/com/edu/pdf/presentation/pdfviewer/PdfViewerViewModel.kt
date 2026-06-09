@@ -28,13 +28,23 @@ import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 
+sealed interface PdfViewerSheetState {
+    data object None : PdfViewerSheetState
+    data object MoreActions : PdfViewerSheetState
+    data class RenameDialog(val currentName: String) : PdfViewerSheetState
+    data object MovePicker : PdfViewerSheetState
+    data object DeleteConfirmation : PdfViewerSheetState
+}
+
 data class PdfViewerUiState(
     val pdfUri: Uri? = null,
     val isTopBarVisible: Boolean = true,
     val isNightMode: Boolean = false,
     val currentPageNumber: Int = 1,
     val pdfFileName: String = "",
-    val pdfFile: PdfFile? = null
+    val pdfFile: PdfFile? = null,
+    val activeSheetState: PdfViewerSheetState = PdfViewerSheetState.None,
+    val renameInput: String = ""
 )
 
 sealed interface PdfViewerEvent {
@@ -47,12 +57,15 @@ sealed interface PdfViewerAction {
     data class SetTopBarVisible(val visible: Boolean) : PdfViewerAction
     data object ToggleTopBar : PdfViewerAction
     data object ToggleNightMode : PdfViewerAction
-    data class RenameFile(val newName: String) : PdfViewerAction
-    data object DeleteFile : PdfViewerAction
+    data class OpenSheet(val state: PdfViewerSheetState) : PdfViewerAction
+    data object CloseSheet : PdfViewerAction
+    data class UpdateRenameInput(val input: String) : PdfViewerAction
+    data object ConfirmRename : PdfViewerAction
+    data object ConfirmDelete : PdfViewerAction
     data object ToggleVaultStatus : PdfViewerAction
     data class ToggleFavorite(val isFav: Boolean) : PdfViewerAction
     data class PrintFile(val context: Context) : PdfViewerAction
-    data class MoveToFolder(val targetFolderId: String?) : PdfViewerAction // 🌟 NAYA: Move button ke liye
+    data class MoveToFolder(val targetFolderId: String?) : PdfViewerAction 
 }
 
 @HiltViewModel
@@ -133,22 +146,33 @@ class PdfViewerViewModel @Inject constructor(
             is PdfViewerAction.ToggleTopBar -> _uiState.update { it.copy(isTopBarVisible = !it.isTopBarVisible) }
             is PdfViewerAction.ToggleNightMode -> _uiState.update { it.copy(isNightMode = !it.isNightMode) }
             
-            is PdfViewerAction.RenameFile -> {
+            is PdfViewerAction.OpenSheet -> _uiState.update { 
+                it.copy(
+                    activeSheetState = action.state,
+                    renameInput = if (action.state is PdfViewerSheetState.RenameDialog) action.state.currentName else it.renameInput
+                ) 
+            }
+            is PdfViewerAction.CloseSheet -> _uiState.update { it.copy(activeSheetState = PdfViewerSheetState.None) }
+            is PdfViewerAction.UpdateRenameInput -> _uiState.update { it.copy(renameInput = action.input) }
+
+            is PdfViewerAction.ConfirmRename -> {
                 viewModelScope.launch {
                     val currentPdf = _uiState.value.pdfFile ?: return@launch
-                    val success = renamePdfUseCase(currentPdf, action.newName)
+                    val newName = _uiState.value.renameInput
+                    val success = renamePdfUseCase(currentPdf, newName)
                     if (success) {
-                        _uiState.update { it.copy(pdfFileName = action.newName) }
+                        _uiState.update { it.copy(pdfFileName = newName, activeSheetState = PdfViewerSheetState.None) }
                         _events.send(PdfViewerEvent.ShowToast("Renamed successfully"))
                     }
                 }
             }
 
-            is PdfViewerAction.DeleteFile -> {
+            is PdfViewerAction.ConfirmDelete -> {
                 viewModelScope.launch {
                     val currentPdf = _uiState.value.pdfFile ?: return@launch
                     val success = deletePdfsUseCase(listOf(currentPdf))
                     if (success) {
+                        _uiState.update { it.copy(activeSheetState = PdfViewerSheetState.None) }
                         _events.send(PdfViewerEvent.ShowToast("Deleted successfully"))
                         _events.send(PdfViewerEvent.NavigateBack)
                     }
@@ -158,6 +182,7 @@ class PdfViewerViewModel @Inject constructor(
             is PdfViewerAction.ToggleVaultStatus -> {
                 viewModelScope.launch {
                     val currentPdf = _uiState.value.pdfFile ?: return@launch
+                    _uiState.update { it.copy(activeSheetState = PdfViewerSheetState.None) }
                     val result = toggleVaultUseCase(currentPdf)
                     if (result.isSuccess) {
                         val msg = if (currentPdf.isVault) "Removed from Vault" else "Moved to Vault"
@@ -183,6 +208,7 @@ class PdfViewerViewModel @Inject constructor(
             is PdfViewerAction.MoveToFolder -> {
                 viewModelScope.launch {
                     val currentPdf = _uiState.value.pdfFile ?: return@launch
+                    _uiState.update { it.copy(activeSheetState = PdfViewerSheetState.None) }
                     val result = moveItemsUseCase(
                         selectedIds = setOf(currentPdf.id),
                         folderIds = emptyList(),

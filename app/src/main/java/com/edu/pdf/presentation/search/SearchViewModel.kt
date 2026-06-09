@@ -17,6 +17,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
+sealed interface SearchSheetState {
+    data object None : SearchSheetState
+    data class PdfMenu(val pdf: PdfFile) : SearchSheetState
+    data class RenameDialog(val pdf: PdfFile, val currentName: String) : SearchSheetState
+    data class MovePicker(val pdf: PdfFile) : SearchSheetState
+    data class DeleteConfirmation(val pdf: PdfFile) : SearchSheetState
+}
+
 // 🌟 STRICT MVI: State Definition
 data class SearchUiState(
     val query: String = "",
@@ -24,7 +32,8 @@ data class SearchUiState(
     val history: ImmutableList<String> = persistentListOf(),
     val isGridView: Boolean = false,
     val isLoading: Boolean = false,
-    val pdfToDelete: PdfFile? = null
+    val activeSheetState: SearchSheetState = SearchSheetState.None,
+    val renameInput: String = ""
 )
 
 // 🌟 STRICT MVI: Actions (Intents from UI)
@@ -36,9 +45,10 @@ sealed interface SearchAction {
     data object ClearAllHistory : SearchAction
     data class MarkPdfAsOpened(val pdfId: String) : SearchAction
     data class ToggleFavorite(val pdf: PdfFile) : SearchAction
-    data class RenamePdf(val pdf: PdfFile, val newName: String) : SearchAction
-    data class ShowDeleteConfirmation(val pdf: PdfFile) : SearchAction
-    data object DismissDeleteConfirmation : SearchAction
+    data class UpdateRenameInput(val input: String) : SearchAction
+    data object ConfirmRename : SearchAction
+    data class OpenSheet(val state: SearchSheetState) : SearchAction
+    data object CloseSheet : SearchAction
     data object ConfirmDeletePdf : SearchAction
     data class MoveToFolder(val pdf: PdfFile, val targetFolderId: String?) : SearchAction
     data class ToggleVaultStatus(val pdf: PdfFile) : SearchAction
@@ -64,7 +74,7 @@ class SearchViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
-    private val _pdfToDelete = MutableStateFlow<PdfFile?>(null)
+    private val _internalState = MutableStateFlow(SearchUiState())
     private val _events = kotlinx.coroutines.channels.Channel<SearchEvent>()
     val events = _events.receiveAsFlow()
 
@@ -89,15 +99,14 @@ class SearchViewModel @Inject constructor(
         searchResultsFlow,
         searchHistoryFlow,
         updateUserPreferencesUseCase.userPreferences.isGridViewFlow, // 🌟 SHARED SYNC
-        _pdfToDelete
-    ) { query, results, history, isGrid, pdfToDelete ->
-        SearchUiState(
+        _internalState
+    ) { query, results, history, isGrid, internal ->
+        internal.copy(
             query = query,
             results = results,
             history = history,
             isGridView = isGrid,
-            isLoading = false,
-            pdfToDelete = pdfToDelete
+            isLoading = false
         )
     }.stateIn(
         scope = viewModelScope,
@@ -115,26 +124,44 @@ class SearchViewModel @Inject constructor(
             is SearchAction.RemoveHistoryItem -> viewModelScope.launch { repository.deleteSearchQuery(action.query) }
             is SearchAction.ClearAllHistory -> viewModelScope.launch { repository.clearAllSearchHistory() }
             is SearchAction.MarkPdfAsOpened -> viewModelScope.launch { markPdfAsOpenedUseCase(action.pdfId) }
-            is SearchAction.ToggleFavorite -> viewModelScope.launch { toggleFavoriteUseCase(action.pdf.id, !action.pdf.isFavorite) }
-            is SearchAction.RenamePdf -> viewModelScope.launch(Dispatchers.IO) {
-                val success = renamePdfUseCase(action.pdf, action.newName)
-                if (success) _events.send(SearchEvent.ShowSnackbar("Renamed successfully"))
+            is SearchAction.ToggleFavorite -> viewModelScope.launch { 
+                toggleFavoriteUseCase(action.pdf.id, !action.pdf.isFavorite) 
+                _internalState.update { it.copy(activeSheetState = SearchSheetState.None) }
             }
-            is SearchAction.ShowDeleteConfirmation -> _pdfToDelete.value = action.pdf
-            is SearchAction.DismissDeleteConfirmation -> _pdfToDelete.value = null
-            is SearchAction.ConfirmDeletePdf -> {
-                val targetPdf = _pdfToDelete.value
-                if (targetPdf != null) {
+            is SearchAction.UpdateRenameInput -> _internalState.update { it.copy(renameInput = action.input) }
+            is SearchAction.ConfirmRename -> {
+                val sheetState = _internalState.value.activeSheetState
+                if (sheetState is SearchSheetState.RenameDialog) {
                     viewModelScope.launch(Dispatchers.IO) {
-                        deletePdfsUseCase(listOf(targetPdf))
+                        val success = renamePdfUseCase(sheetState.pdf, _internalState.value.renameInput)
+                        if (success) {
+                            _events.send(SearchEvent.ShowSnackbar("Renamed successfully"))
+                            _internalState.update { it.copy(activeSheetState = SearchSheetState.None) }
+                        }
+                    }
+                }
+            }
+            is SearchAction.OpenSheet -> _internalState.update { 
+                it.copy(
+                    activeSheetState = action.state,
+                    renameInput = if (action.state is SearchSheetState.RenameDialog) action.state.currentName else it.renameInput
+                ) 
+            }
+            is SearchAction.CloseSheet -> _internalState.update { it.copy(activeSheetState = SearchSheetState.None) }
+            is SearchAction.ConfirmDeletePdf -> {
+                val sheetState = _internalState.value.activeSheetState
+                if (sheetState is SearchSheetState.DeleteConfirmation) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        deletePdfsUseCase(listOf(sheetState.pdf))
                         withContext(Dispatchers.Main) {
-                            _pdfToDelete.value = null
+                            _internalState.update { it.copy(activeSheetState = SearchSheetState.None) }
                             _events.send(SearchEvent.ShowSnackbar("File deleted permanently"))
                         }
                     }
                 }
             }
             is SearchAction.MoveToFolder -> viewModelScope.launch {
+                _internalState.update { it.copy(activeSheetState = SearchSheetState.None) }
                 val result = moveItemsUseCase(
                     selectedIds = setOf(action.pdf.id),
                     folderIds = emptyList(),

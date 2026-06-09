@@ -7,6 +7,7 @@ import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaf
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -19,8 +20,18 @@ fun AdaptivePdfLayout(
     selectedPdfPath: String?,
     onPdfSelected: (String) -> Unit,
     onBack: () -> Unit,
+    isTablet: Boolean, // 🌟 NAYA: Check for device type
     modifier: Modifier = Modifier
 ) {
+    if (!isTablet) {
+        // 📱 PHONE MODE: Standard Linear Layout (No Pane Overlaps!)
+        Box(modifier = modifier) {
+            listContent()
+        }
+        return
+    }
+
+    // 🖥️ TABLET MODE: List-Detail Split Pane
     val navigator = rememberListDetailPaneScaffoldNavigator<String>()
     val scope = rememberCoroutineScope()
 
@@ -51,7 +62,7 @@ fun AdaptivePdfLayout(
         }
     }
     
-    androidx.activity.compose.BackHandler(navigator.canNavigateBack()) {
+    androidx.activity.compose.BackHandler(isTablet && navigator.canNavigateBack()) {
         scope.launch {
             navigator.navigateBack()
             onBack()

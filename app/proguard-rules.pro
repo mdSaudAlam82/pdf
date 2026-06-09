@@ -18,7 +18,14 @@
 -keep class * implements org.slf4j.spi.SLF4JServiceProvider { *; }
 -dontwarn org.slf4j.**
 
-# 3. General Android Optimizations
+# 3. XML & Stax2 Service Cleanups (Fixes Release Warnings)
+# These services are referenced by iText/transitive deps but often missing or not required on Android
+-dontwarn org.codehaus.stax2.validation.**
+-dontwarn org.w3c.dom.**
+-dontwarn org.xml.sax.**
+-dontwarn sharpen.config.**
+
+# 4. General Android Optimizations
 -optimizationpasses 5
 -dontusemixedcaseclassnames
 -dontskipnonpubliclibraryclasses

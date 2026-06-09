@@ -91,7 +91,7 @@ fun SettingsScreen(
 
             Button(
                 onClick = { viewModel.onAction(SettingsAction.SaveAndVerifyKeys) },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp).padding(bottom = 8.dp),
                 enabled = !state.isVerifying,
                 shape = RoundedCornerShape(16.dp)
             ) {
@@ -103,8 +103,6 @@ fun SettingsScreen(
                     Text("Verify & Save Keys", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
-
-            Spacer(modifier = Modifier.height(100.dp)) // Padding for bottom bar
         }
     }
 }
